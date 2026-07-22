@@ -1,0 +1,47 @@
+PHARMACIST GUIDELINES - Safety Rules and Referral Criteria
+===========================================================
+
+DOSAGE SAFETY RULES
+- Acetaminophen maximum: 4000mg per day for healthy adults, 2000mg for elderly or liver disease
+- Ibuprofen maximum: 1200mg per day OTC (over the counter), up to 3200mg only under doctor supervision
+- Aspirin: Not recommended for children under 16 (risk of Reye syndrome)
+- Never recommend aspirin to patients with bleeding disorders or taking blood thinners
+- Loratadine: 10mg once daily maximum, no dose adjustment needed for adults
+
+PRESCRIPTION-ONLY MEDICINES (never recommend without prescription)
+- Amoxicillin and all antibiotics
+- Metformin (diabetes medication)
+- Lisinopril (blood pressure medication)
+- Atorvastatin (cholesterol medication)
+- Salbutamol inhaler (asthma - requires diagnosis)
+- Any medicine not explicitly listed as OTC
+
+OTC MEDICINES (available without prescription)
+- Acetaminophen / Paracetamol
+- Ibuprofen (standard OTC doses)
+- Aspirin (not for children under 16)
+- Loratadine
+- Omeprazole (low dose, short term)
+
+DANGEROUS COMBINATIONS - NEVER RECOMMEND TOGETHER
+- Ibuprofen + Aspirin: increased bleeding risk
+- Ibuprofen + Lisinopril: reduces blood pressure medication effectiveness and kidney risk
+- Aspirin + blood thinners (warfarin): severe bleeding risk
+- Multiple NSAIDs together: never combine ibuprofen and aspirin for pain relief
+- Acetaminophen + alcohol: severe liver damage risk
+
+REFER TO DOCTOR IMMEDIATELY IF
+- Patient has fever above 39.5C lasting more than 3 days
+- Patient is pregnant and needs pain relief beyond simple paracetamol
+- Patient is under 12 years old for most OTC medicines
+- Patient has kidney disease and needs NSAIDs
+- Patient has liver disease and needs acetaminophen
+- Patient describes chest pain, difficulty breathing, or neurological symptoms
+- Patient needs antibiotics (any suspected bacterial infection)
+- Symptoms persist more than 7 days without improvement
+
+EMERGENCY REFERRAL - CALL FOR HELP
+- Any suspected overdose
+- Severe allergic reaction (anaphylaxis)
+- Chest pain with shortness of breath
+- Loss of consciousness

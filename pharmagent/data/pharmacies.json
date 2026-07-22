@@ -1,0 +1,92 @@
+[
+  {
+    "id": "ph_001",
+    "name": "Pharmacie Centrale Casablanca",
+    "address": "123 Boulevard Mohammed V, Casablanca",
+    "lat": 33.5912,
+    "lng": -7.6136,
+    "phone": "+212-522-001001",
+    "opening_hours": "08:00-22:00"
+  },
+  {
+    "id": "ph_002",
+    "name": "Pharmacie Al Fath",
+    "address": "45 Rue de Foucauld, Casablanca",
+    "lat": 33.5889,
+    "lng": -7.6198,
+    "phone": "+212-522-002002",
+    "opening_hours": "08:00-21:00"
+  },
+  {
+    "id": "ph_003",
+    "name": "Pharmacie Maarif",
+    "address": "78 Boulevard Zerktouni, Maarif, Casablanca",
+    "lat": 33.5756,
+    "lng": -7.6334,
+    "phone": "+212-522-003003",
+    "opening_hours": "08:00-23:00"
+  },
+  {
+    "id": "ph_004",
+    "name": "Pharmacie Ain Diab",
+    "address": "12 Boulevard de la Corniche, Ain Diab, Casablanca",
+    "lat": 33.5934,
+    "lng": -7.6789,
+    "phone": "+212-522-004004",
+    "opening_hours": "09:00-21:00"
+  },
+  {
+    "id": "ph_005",
+    "name": "Pharmacie Hay Hassani",
+    "address": "34 Rue Ibnou Sina, Hay Hassani, Casablanca",
+    "lat": 33.5612,
+    "lng": -7.6701,
+    "phone": "+212-522-005005",
+    "opening_hours": "08:00-20:00"
+  },
+  {
+    "id": "ph_006",
+    "name": "Pharmacie Sidi Bernoussi",
+    "address": "90 Avenue des FAR, Sidi Bernoussi, Casablanca",
+    "lat": 33.6123,
+    "lng": -7.5456,
+    "phone": "+212-522-006006",
+    "opening_hours": "08:00-21:00"
+  },
+  {
+    "id": "ph_007",
+    "name": "Pharmacie Anfa",
+    "address": "56 Boulevard d'Anfa, Casablanca",
+    "lat": 33.5834,
+    "lng": -7.6445,
+    "phone": "+212-522-007007",
+    "opening_hours": "08:00-22:00"
+  },
+  {
+    "id": "ph_008",
+    "name": "Pharmacie Bernoussi Nuit",
+    "address": "15 Rue Al Massira, Casablanca",
+    "lat": 33.6034,
+    "lng": -7.5612,
+    "phone": "+212-522-008008",
+    "opening_hours": "24h/24"
+  },
+  {
+    "id": "ph_009",
+    "name": "Pharmacie Racine",
+    "address": "23 Rue Moliere, Racine, Casablanca",
+    "lat": 33.5923,
+    "lng": -7.6267,
+    "phone": "+212-522-009009",
+    "opening_hours": "08:00-21:00"
+  },
+  {
+    "id": "ph_010",
+    "name": "Pharmacie Oulfa",
+    "address": "67 Boulevard Oulfa, Casablanca",
+    "lat": 33.5534,
+    "lng": -7.6823,
+    "phone": "+212-522-010010",
+    "opening_hours": "08:00-20:00"
+  }
+]

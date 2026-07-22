@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "PharmAI",
+    "slug": "pharmaai-mobile",
+    "scheme": "pharmaai",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "ma.pharmaai.mobile"
+    },
+    "android": {
+      "package": "ma.pharmaai.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#00236f"
+      }
+    },
+  "extra": {
+   "apiBaseUrl": "http://192.168.1.54:8000/api/v1",
+   "wsBaseUrl": "ws://192.168.1.54:8000/ws",
+   "pharmagentUrl": "http://192.168.1.54:8001"
+ }
+  }
+}

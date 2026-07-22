@@ -1,0 +1,93 @@
+name: pharmai-mobile-backend
+services:
+  postgres:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: pharmaai_mobile_postgres
+    environment:
+      POSTGRES_USER: pharmacy_user
+      POSTGRES_PASSWORD: pharmacy_pass
+      POSTGRES_DB: pharmacy_mobile_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_mobile_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pharmacy_user -d pharmacy_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: pharmaai_mobile_redis
+    ports:
+      - "6381:6379"
+    volumes:
+      - redis_mobile_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # The Django app container is opt-in: `docker compose --profile app up`.
+  # Local Windows dev workflow stays unchanged (postgres + redis only).
+  app:
+    profiles: ["app"]
+    build: .
+    container_name: pharmaai_app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+      DATABASE_URL: postgres://pharmacy_user:pharmacy_pass@postgres:5432/pharmacy_db
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      POSTGRES_HOST: postgres
+      ALLOWED_HOSTS: "*"
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-prod}
+    ports:
+      - "8000:8000"
+
+  worker:
+    profiles: ["app"]
+    build: .
+    container_name: pharmaai_worker
+    command: celery -A config worker -l info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+      DATABASE_URL: postgres://pharmacy_user:pharmacy_pass@postgres:5432/pharmacy_db
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      POSTGRES_HOST: postgres
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-prod}
+
+  beat:
+    profiles: ["app"]
+    build: .
+    container_name: pharmaai_beat
+    command: celery -A config beat -l info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+      DATABASE_URL: postgres://pharmacy_user:pharmacy_pass@postgres:5432/pharmacy_db
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      POSTGRES_HOST: postgres
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-prod}
+
+volumes:
+  postgres_mobile_data:
+  redis_mobile_data:

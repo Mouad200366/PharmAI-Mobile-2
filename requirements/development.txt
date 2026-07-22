@@ -1,0 +1,12 @@
+-r base.txt
+
+pytest>=8.2
+pytest-django>=4.8
+pytest-cov>=5.0
+factory-boy>=3.3
+faker>=25.2
+
+django-debug-toolbar>=4.4
+ipython>=8.24
+
+ruff>=0.5

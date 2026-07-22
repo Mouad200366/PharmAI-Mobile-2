@@ -1,0 +1,71 @@
+{
+  "ph_001": [
+    {"medicine": "acetaminophen", "price": 12.50, "quantity": 150, "requires_prescription": false},
+    {"medicine": "ibuprofen", "price": 15.00, "quantity": 80, "requires_prescription": false},
+    {"medicine": "amoxicillin", "price": 45.00, "quantity": 60, "requires_prescription": true},
+    {"medicine": "omeprazole", "price": 28.00, "quantity": 40, "requires_prescription": false},
+    {"medicine": "loratadine", "price": 18.00, "quantity": 90, "requires_prescription": false},
+    {"medicine": "atorvastatin", "price": 85.00, "quantity": 30, "requires_prescription": true}
+  ],
+  "ph_002": [
+    {"medicine": "acetaminophen", "price": 11.00, "quantity": 200, "requires_prescription": false},
+    {"medicine": "ibuprofen", "price": 14.50, "quantity": 60, "requires_prescription": false},
+    {"medicine": "aspirin", "price": 8.00, "quantity": 120, "requires_prescription": false},
+    {"medicine": "metformin", "price": 35.00, "quantity": 45, "requires_prescription": true},
+    {"medicine": "lisinopril", "price": 55.00, "quantity": 25, "requires_prescription": true}
+  ],
+  "ph_003": [
+    {"medicine": "acetaminophen", "price": 13.00, "quantity": 100, "requires_prescription": false},
+    {"medicine": "ibuprofen", "price": 16.00, "quantity": 70, "requires_prescription": false},
+    {"medicine": "loratadine", "price": 19.00, "quantity": 55, "requires_prescription": false},
+    {"medicine": "salbutamol", "price": 65.00, "quantity": 20, "requires_prescription": true},
+    {"medicine": "omeprazole", "price": 27.00, "quantity": 35, "requires_prescription": false}
+  ],
+  "ph_004": [
+    {"medicine": "aspirin", "price": 7.50, "quantity": 180, "requires_prescription": false},
+    {"medicine": "acetaminophen", "price": 12.00, "quantity": 90, "requires_prescription": false},
+    {"medicine": "amoxicillin", "price": 43.00, "quantity": 40, "requires_prescription": true},
+    {"medicine": "atorvastatin", "price": 82.00, "quantity": 15, "requires_prescription": true}
+  ],
+  "ph_005": [
+    {"medicine": "ibuprofen", "price": 14.00, "quantity": 110, "requires_prescription": false},
+    {"medicine": "acetaminophen", "price": 11.50, "quantity": 130, "requires_prescription": false},
+    {"medicine": "metformin", "price": 33.00, "quantity": 50, "requires_prescription": true},
+    {"medicine": "loratadine", "price": 17.50, "quantity": 75, "requires_prescription": false}
+  ],
+  "ph_006": [
+    {"medicine": "acetaminophen", "price": 12.00, "quantity": 160, "requires_prescription": false},
+    {"medicine": "aspirin", "price": 8.50, "quantity": 100, "requires_prescription": false},
+    {"medicine": "lisinopril", "price": 52.00, "quantity": 30, "requires_prescription": true},
+    {"medicine": "salbutamol", "price": 63.00, "quantity": 25, "requires_prescription": true}
+  ],
+  "ph_007": [
+    {"medicine": "ibuprofen", "price": 15.50, "quantity": 85, "requires_prescription": false},
+    {"medicine": "omeprazole", "price": 29.00, "quantity": 45, "requires_prescription": false},
+    {"medicine": "amoxicillin", "price": 44.00, "quantity": 55, "requires_prescription": true},
+    {"medicine": "acetaminophen", "price": 12.50, "quantity": 140, "requires_prescription": false},
+    {"medicine": "loratadine", "price": 18.50, "quantity": 60, "requires_prescription": false}
+  ],
+  "ph_008": [
+    {"medicine": "acetaminophen", "price": 13.50, "quantity": 200, "requires_prescription": false},
+    {"medicine": "ibuprofen", "price": 16.50, "quantity": 100, "requires_prescription": false},
+    {"medicine": "aspirin", "price": 9.00, "quantity": 150, "requires_prescription": false},
+    {"medicine": "amoxicillin", "price": 46.00, "quantity": 70, "requires_prescription": true},
+    {"medicine": "omeprazole", "price": 30.00, "quantity": 50, "requires_prescription": false},
+    {"medicine": "loratadine", "price": 20.00, "quantity": 80, "requires_prescription": false},
+    {"medicine": "metformin", "price": 36.00, "quantity": 40, "requires_prescription": true},
+    {"medicine": "salbutamol", "price": 67.00, "quantity": 30, "requires_prescription": true}
+  ],
+  "ph_009": [
+    {"medicine": "acetaminophen", "price": 11.00, "quantity": 120, "requires_prescription": false},
+    {"medicine": "ibuprofen", "price": 14.00, "quantity": 90, "requires_prescription": false},
+    {"medicine": "atorvastatin", "price": 80.00, "quantity": 20, "requires_prescription": true},
+    {"medicine": "lisinopril", "price": 53.00, "quantity": 35, "requires_prescription": true}
+  ],
+  "ph_010": [
+    {"medicine": "acetaminophen", "price": 10.50, "quantity": 175, "requires_prescription": false},
+    {"medicine": "aspirin", "price": 7.00, "quantity": 130, "requires_prescription": false},
+    {"medicine": "loratadine", "price": 17.00, "quantity": 65, "requires_prescription": false},
+    {"medicine": "metformin", "price": 34.00, "quantity": 45, "requires_prescription": true}
+  ]
+}

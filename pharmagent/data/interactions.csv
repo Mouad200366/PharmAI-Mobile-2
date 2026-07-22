@@ -1,0 +1,16 @@
+drug_a,drug_b,severity,description
+ibuprofen,aspirin,moderate,Combining ibuprofen and aspirin increases the risk of gastrointestinal bleeding and reduces the cardioprotective effect of aspirin
+ibuprofen,lisinopril,moderate,Ibuprofen can reduce the effectiveness of lisinopril and increase the risk of kidney damage
+ibuprofen,metformin,minor,Ibuprofen may slightly reduce kidney function which can affect metformin clearance
+aspirin,lisinopril,minor,High dose aspirin may reduce the effectiveness of lisinopril blood pressure control
+atorvastatin,amoxicillin,minor,No significant interaction but monitor for any unusual muscle pain
+ibuprofen,atorvastatin,minor,NSAIDs may slightly increase atorvastatin levels in blood
+aspirin,metformin,minor,Aspirin at high doses may enhance the glucose lowering effect of metformin
+loratadine,metformin,none,No known significant interaction between loratadine and metformin
+omeprazole,metformin,minor,Omeprazole may slightly increase metformin absorption
+omeprazole,aspirin,beneficial,Omeprazole is often recommended alongside aspirin to protect the stomach lining
+acetaminophen,ibuprofen,minor,Can be used together at correct doses but monitor total daily limits carefully
+acetaminophen,metformin,none,No known significant interaction
+lisinopril,metformin,none,No significant interaction commonly used together in diabetic patients with high blood pressure
+salbutamol,aspirin,minor,Aspirin sensitive patients may experience bronchospasm with aspirin use alongside salbutamol
+ibuprofen,salbutamol,minor,NSAIDs including ibuprofen may reduce the bronchodilating effect of salbutamol in aspirin sensitive asthma
