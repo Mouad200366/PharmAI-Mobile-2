@@ -1,18 +1,17 @@
-"""Seeds the catalog with the same 10 medicines Pharmagent's RAG already
-knows about (its leaflet PDFs cover exactly these), so the Dashboard
-catalog and the AI Assistant stay consistent with each other. Also seeds
-two pharmacies (with pharmacist-owner accounts) and stock/pricing so the
-catalog has real, orderable data instead of an empty database.
+"""Seed the PharmAI test catalog.
 
-Safe to re-run — everything is get_or_create'd, no duplicates on repeat
-runs.
+Creates or updates:
+- 20 medicines
+- Medicine image paths
+- 2 test pharmacies with pharmacist accounts
+- Stock, prices, quantities and availability
 
-No product images are seeded here on purpose: there are no real photos
-anywhere in this project to source from, and hotlinking arbitrary
-third-party stock photos into a seed script isn't something to do without
-you personally checking each image's license. The catalog UI has a clean
-icon fallback for medicines with no photo — add real ones anytime via
-/admin/ (Catalog > Medicines > click a medicine > upload an image).
+The first 10 medicines match the current PharmAgent leaflet documents.
+The additional 10 medicines are test catalogue entries and must still be
+added to PharmAgent's knowledge base.
+
+Safe to run repeatedly without creating duplicate medicines, pharmacies
+or stock records.
 
 Usage:
     python manage.py seed_catalog
@@ -90,7 +89,100 @@ MEDICINES = [
         description="Bronchodilatateur à courte durée d'action utilisé dans le traitement de l'asthme et des bronchospasmes.",
         requires_prescription=True,
     ),
+    dict(
+        name='Cetirizine',
+        generic_name='Cétirizine',
+        manufacturer='PharmAI Demo',
+        description="Antihistaminique utilisé pour soulager les symptômes des allergies, notamment les éternuements, les démangeaisons et l'écoulement nasal.",
+        requires_prescription=False,
+    ),
+    dict(
+        name='Azithromycin',
+        generic_name='Azithromycine',
+        manufacturer='PharmAI Demo',
+        description="Antibiotique de la famille des macrolides utilisé pour traiter certaines infections bactériennes.",
+        requires_prescription=True,
+    ),
+    dict(
+        name='Diclofenac',
+        generic_name='Diclofénac',
+        manufacturer='PharmAI Demo',
+        description="Anti-inflammatoire non stéroïdien utilisé pour réduire certaines douleurs et inflammations.",
+        requires_prescription=True,
+    ),
+    dict(
+        name='Amlodipine',
+        generic_name='Amlodipine',
+        manufacturer='PharmAI Demo',
+        description="Inhibiteur calcique utilisé dans le traitement de l'hypertension artérielle et de certaines formes d'angine de poitrine.",
+        requires_prescription=True,
+    ),
+    dict(
+        name='Losartan',
+        generic_name='Losartan',
+        manufacturer='PharmAI Demo',
+        description="Antagoniste des récepteurs de l'angiotensine II utilisé principalement dans le traitement de l'hypertension artérielle.",
+        requires_prescription=True,
+    ),
+    dict(
+        name='Pantoprazole',
+        generic_name='Pantoprazole',
+        manufacturer='PharmAI Demo',
+        description="Inhibiteur de la pompe à protons utilisé pour réduire la production d'acide gastrique.",
+        requires_prescription=True,
+    ),
+    dict(
+        name='Clotrimazole',
+        generic_name='Clotrimazole',
+        manufacturer='PharmAI Demo',
+        description="Antifongique utilisé principalement pour traiter certaines infections fongiques de la peau.",
+        requires_prescription=False,
+    ),
+    dict(
+        name='Dextromethorphan',
+        generic_name='Dextrométhorphane',
+        manufacturer='PharmAI Demo',
+        description="Antitussif utilisé pour soulager temporairement certaines toux sèches non productives.",
+        requires_prescription=False,
+    ),
+    dict(
+        name='Fluconazole',
+        generic_name='Fluconazole',
+        manufacturer='PharmAI Demo',
+        description="Antifongique systémique utilisé dans le traitement de certaines infections provoquées par des champignons.",
+        requires_prescription=True,
+    ),
+    dict(
+        name='Hydrocortisone',
+        generic_name='Hydrocortisone',
+        manufacturer='PharmAI Demo',
+        description="Corticostéroïde utilisé sous certaines formes topiques pour réduire les inflammations et démangeaisons cutanées.",
+        requires_prescription=False,
+    ),
 ]
+MEDICINE_IMAGES = {
+    'Acetaminophen': 'medicines/acetaminophen.jpg',
+    'Amoxicillin': 'medicines/amoxicillin.jpg',
+    'Aspirin': 'medicines/aspirin.jpg',
+    'Atorvastatin': 'medicines/atorvastatin.jpg',
+    'Ibuprofen': 'medicines/ibuprofen.jpg',
+    'Lisinopril': 'medicines/lisinopril.jpg',
+    'Loratadine': 'medicines/loratadine.jpg',
+    'Metformin': 'medicines/metformin.jpg',
+    'Omeprazole': 'medicines/omeprazole.jpg',
+    'Salbutamol': 'medicines/salbutamol.jpg',
+
+    'Cetirizine': 'medicines/cetirizine.jpg',
+    'Azithromycin': 'medicines/azithromycin.jpg',
+    'Diclofenac': 'medicines/diclofenac.jpg',
+    'Amlodipine': 'medicines/amlodipine.jpg',
+    'Losartan': 'medicines/losartan.jpg',
+    'Pantoprazole': 'medicines/pantoprazole.jpg',
+    'Clotrimazole': 'medicines/clotrimazole.jpg',
+    'Dextromethorphan': 'medicines/dextromethorphan.jpg',
+    'Fluconazole': 'medicines/fluconazole.jpg',
+    'Hydrocortisone': 'medicines/hydrocortisone.jpg',
+}
 
 # Two pharmacies around Casablanca so stock/price actually varies between
 # them, which is what makes proximity-based ordering meaningful later.
@@ -115,7 +207,7 @@ PHARMACIES = [
 
 
 class Command(BaseCommand):
-    help = 'Seeds 10 medicines + 2 pharmacies + stock/pricing for the catalog.'
+    help = 'Seeds 20 medicines + 2 pharmacies + stock/pricing for the catalog.'
 
     @transaction.atomic
     def handle(self, *args, **options):
@@ -128,19 +220,32 @@ class Command(BaseCommand):
             f'{len(medicines) * len(pharmacies)} stock entries.'
         ))
         self.stdout.write(
-            'No images seeded — run `python manage.py fetch_dailymed_images` '
-            'to pull real product photos from DailyMed (NLM/FDA), or add '
-            'them manually via /admin/ (Catalog > Medicines).'
+            'Medicine image paths were connected from MEDICINE_IMAGES.'
         )
 
     def _seed_medicines(self):
         medicines = []
+
         for data in MEDICINES:
-            medicine, created = Medicine.objects.get_or_create(
-                name=data['name'], defaults=data,
+            medicine_data = data.copy()
+
+            medicine_data['image'] = MEDICINE_IMAGES.get(
+                data['name'],
             )
+
+            medicine, created = Medicine.objects.update_or_create(
+                name=data['name'],
+                defaults=medicine_data,
+            )
+
             medicines.append(medicine)
-            self.stdout.write(f'  {"created" if created else "exists "}  Medicine: {medicine.name}')
+
+            status = 'created' if created else 'updated'
+
+            self.stdout.write(
+                f'  {status:<7} Medicine: {medicine.name}'
+            )
+
         return medicines
 
     def _seed_pharmacies(self):
@@ -185,7 +290,7 @@ class Command(BaseCommand):
         # price by medicine index, +/- a per-pharmacy variation so prices
         # aren't identical across pharmacies (more realistic, and gives
         # "cheapest nearby" something real to compare).
-        base_prices = [15, 45, 12, 85, 18, 65, 28, 55, 38, 72]
+        base_prices = [15, 45, 12, 85, 18,65, 28, 55, 38, 72,22, 55, 30, 48, 60,42, 25, 32, 70, 20,]
         for pi, pharmacy in enumerate(pharmacies):
             for mi, medicine in enumerate(medicines):
                 price = base_prices[mi] + (pi * 3) - 1.5

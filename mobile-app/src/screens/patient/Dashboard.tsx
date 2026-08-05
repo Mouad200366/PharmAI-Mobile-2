@@ -1,425 +1,956 @@
-import { useCallback, useState } from 'react'
 import {
-  View,
-  Text,
-  StyleSheet,
-  TextInput,
-  Pressable,
-  ScrollView,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react'
+import {
   ActivityIndicator,
+  FlatList,
+  Pressable,
   RefreshControl,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native'
 import type { CompositeScreenProps } from '@react-navigation/native'
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { useFocusEffect } from '@react-navigation/native'
 import { LinearGradient } from 'expo-linear-gradient'
-import type { AppTabParamList, MainStackParamList } from '../../navigation/types'
-import Icon from '../../components/ui/Icon'
-import { ordersApi, type Order, STATUS_LABELS, STATUS_COLOR, isActiveOrder } from '../../api/orders'
-import { usersApi, type UserProfile } from '../../api/users'
-import { colors } from '../../theme/colors'
 
-// Composite props because Dashboard needs to navigate both to sibling tabs
-// (Search, Orders, Profile) AND to screens that live one level up in
-// MainStack (Addresses, OrderDetail) -- web could just do a flat <Link to>
-// for all of these since it's one router; native needs the parent stack's
-// navigator merged in to type-check those cross-navigator jumps.
+import type {
+  AppTabParamList,
+  MainStackParamList,
+} from '../../navigation/types'
+import {
+  catalogApi,
+  type Medicine,
+} from '../../api/catalog'
+import {
+  usersApi,
+  type UserProfile,
+} from '../../api/users'
+import { useCartStore } from '../../store/cartStore'
+import { colors } from '../../theme/colors'
+import MedicineGridCard from '../../components/MedicineGridCard'
+import Icon from '../../components/ui/Icon'
+
+
+
+
 type Props = CompositeScreenProps<
   BottomTabScreenProps<AppTabParamList, 'Dashboard'>,
   NativeStackScreenProps<MainStackParamList>
 >
 
-const QUICK_SEARCHES = ['Doliprane', 'Thermomètre', 'Amoxicilline', 'Paracétamol']
+export default function Dashboard({
+  navigation,
+}: Props) {
+  const [profile, setProfile] =
+    useState<UserProfile | null>(null)
 
-const QUICK_ACTIONS = [
-  { icon: 'medication', label: 'Commander', color: colors.primary, bg: '#eff6ff' },
-  { icon: 'local_shipping', label: 'Commandes', color: '#d97706', bg: '#fffbeb' },
-  { icon: 'location_on', label: 'Adresses', color: '#16a34a', bg: '#f0fdf4' },
-  { icon: 'person', label: 'Profil', color: '#9333ea', bg: '#faf5ff' },
-] as const
+  const [medicines, setMedicines] = useState<
+    Medicine[]
+  >([])
 
-// Mobile port of the web app's Dashboard.tsx. Same content and layout
-// logic (greeting, search bar, quick-search chips, stat cards, quick
-// actions, recent orders list), reflowed for a scrollable phone screen.
-// Pull-to-refresh is added since it's the standard mobile idiom for this
-// kind of data screen -- web has no equivalent (browser refresh covers it).
-export default function Dashboard({ navigation }: Props) {
-  const [profile, setProfile] = useState<UserProfile | null>(null)
-  const [orders, setOrders] = useState<Order[]>([])
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
   const [search, setSearch] = useState('')
 
-  const load = useCallback(async () => {
-    const [profileRes, ordersRes] = await Promise.all([usersApi.me(), ordersApi.list()])
-    setProfile(profileRes.data)
-    setOrders(ordersRes.data.slice(0, 5))
-  }, [])
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] =
+    useState(false)
+  const [searching, setSearching] =
+    useState(false)
 
-  useFocusEffect(
-    useCallback(() => {
-      load().finally(() => setLoading(false))
-    }, [load]),
+  const [error, setError] = useState<
+    string | null
+  >(null)
+
+  const [medicineCount, setMedicineCount] =
+    useState(0)
+
+  /*
+   * Prevents the initial medicine request from being made
+   * twice when the Dashboard first opens.
+   */
+  const searchInitialized = useRef(false)
+
+  /*
+   * Helps prevent an older search response from replacing
+   * the result of a newer search.
+   */
+  const searchRequestId = useRef(0)
+
+  /*
+   * Prevents reloading the complete Dashboard every time
+   * the user moves between tabs.
+   */
+  const dashboardLoaded = useRef(false)
+
+  const cartItems = useCartStore(
+    (state) => state.items,
   )
 
-  async function onRefresh() {
-    setRefreshing(true)
-    await load()
-    setRefreshing(false)
+  const addItem = useCartStore(
+    (state) => state.addItem,
+  )
+
+  const updateQuantity = useCartStore(
+    (state) => state.updateQuantity,
+  )
+
+  const cartCount = cartItems.reduce(
+    (total, item) => total + item.quantity,
+    0,
+  )
+
+  /*
+   * Loads the user profile and the first page of medicines.
+   */
+  const loadDashboard = useCallback(async () => {
+    setError(null)
+
+    const [profileResult, medicinesResult] =
+      await Promise.allSettled([
+        usersApi.me(),
+        catalogApi.list(),
+      ])
+
+    if (profileResult.status === 'fulfilled') {
+      setProfile(profileResult.value.data)
+    } else {
+      console.error(
+        'Profile loading error:',
+        profileResult.reason,
+      )
+    }
+
+    if (medicinesResult.status === 'fulfilled') {
+      setMedicines(
+        medicinesResult.value.data.results,
+      )
+
+      setMedicineCount(
+        medicinesResult.value.data.count,
+      )
+    } else {
+      console.error(
+        'Medicines loading error:',
+        medicinesResult.reason,
+      )
+
+      setMedicines([])
+      setMedicineCount(0)
+
+      setError(
+        "Impossible de charger les médicaments. Vérifiez votre connexion.",
+      )
+    }
+  }, [])
+
+  /*
+   * Loads Dashboard data the first time the screen opens.
+   */
+  useFocusEffect(
+    useCallback(() => {
+      if (dashboardLoaded.current) {
+        return
+      }
+
+      dashboardLoaded.current = true
+      setLoading(true)
+
+      loadDashboard().finally(() => {
+        setLoading(false)
+      })
+    }, [loadDashboard]),
+  )
+
+  /*
+   * Searches medicines automatically after the user stops
+   * typing for 400 milliseconds.
+   */
+  useEffect(() => {
+    if (!searchInitialized.current) {
+      searchInitialized.current = true
+      return
+    }
+
+    const requestId = ++searchRequestId.current
+
+    const timer = setTimeout(async () => {
+      try {
+        setSearching(true)
+        setError(null)
+
+        const cleanSearch = search.trim()
+
+        const response = await catalogApi.list({
+          search: cleanSearch || undefined,
+        })
+
+        /*
+         * Only accept this response when it belongs to the
+         * newest search request.
+         */
+        if (
+          requestId !== searchRequestId.current
+        ) {
+          return
+        }
+
+        setMedicines(response.data.results)
+        setMedicineCount(response.data.count)
+      } catch (searchError) {
+        if (
+          requestId !== searchRequestId.current
+        ) {
+          return
+        }
+
+        console.error(
+          'Medicine search error:',
+          searchError,
+        )
+
+        setMedicines([])
+        setMedicineCount(0)
+
+        setError(
+          "Impossible d'effectuer la recherche. Réessayez.",
+        )
+      } finally {
+        if (
+          requestId === searchRequestId.current
+        ) {
+          setSearching(false)
+        }
+      }
+    }, 400)
+
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [search])
+
+  /*
+   * Pull-to-refresh reloads the current search instead of
+   * always returning to the complete medicine catalogue.
+   */
+  async function handleRefresh() {
+    try {
+      setRefreshing(true)
+      setError(null)
+
+      const cleanSearch = search.trim()
+
+      const [profileResult, medicinesResult] =
+        await Promise.allSettled([
+          usersApi.me(),
+          catalogApi.list({
+            search: cleanSearch || undefined,
+          }),
+        ])
+
+      if (profileResult.status === 'fulfilled') {
+        setProfile(profileResult.value.data)
+      }
+
+      if (
+        medicinesResult.status === 'fulfilled'
+      ) {
+        setMedicines(
+          medicinesResult.value.data.results,
+        )
+
+        setMedicineCount(
+          medicinesResult.value.data.count,
+        )
+      } else {
+        setError(
+          "Impossible d'actualiser les médicaments.",
+        )
+      }
+    } catch (refreshError) {
+      console.error(
+        'Dashboard refresh error:',
+        refreshError,
+      )
+
+      setError(
+        "Impossible d'actualiser le Dashboard.",
+      )
+    } finally {
+      setRefreshing(false)
+    }
   }
 
-  function goSearch(query: string) {
-    navigation.navigate('Search', { q: query })
+  function getMedicineQuantity(
+    medicineId: number,
+  ) {
+    const cartItem = cartItems.find(
+      (item) =>
+        item.medicine.id === medicineId,
+    )
+
+    return cartItem?.quantity ?? 0
   }
 
-  function goQuickAction(label: string) {
-    if (label === 'Commander') navigation.navigate('Search', undefined)
-    else if (label === 'Commandes') navigation.navigate('Orders')
-    else if (label === 'Adresses') navigation.navigate('Addresses')
-    else if (label === 'Profil') navigation.navigate('Profile')
+  function handleAddMedicine(
+    medicine: Medicine,
+  ) {
+    addItem(medicine)
+  }
+
+  function handleIncreaseMedicine(
+    medicine: Medicine,
+  ) {
+    const currentQuantity =
+      getMedicineQuantity(medicine.id)
+
+    updateQuantity(
+      medicine.id,
+      currentQuantity + 1,
+    )
+  }
+
+  function handleDecreaseMedicine(
+    medicine: Medicine,
+  ) {
+    const currentQuantity =
+      getMedicineQuantity(medicine.id)
+
+    updateQuantity(
+      medicine.id,
+      currentQuantity - 1,
+    )
+  }
+
+  function clearSearch() {
+    setSearch('')
   }
 
   if (loading) {
     return (
       <View style={styles.loadingScreen}>
-        <ActivityIndicator size="large" color={colors.primary} />
+        <ActivityIndicator
+          size="large"
+          color={colors.primary}
+        />
+
+        <Text style={styles.loadingText}>
+          Chargement des médicaments...
+        </Text>
       </View>
     )
   }
 
-  const firstName = profile?.first_name || 'Mohamed'
-  const hour = new Date().getHours()
-  const greeting = hour < 12 ? 'Bonjour' : hour < 18 ? 'Bon après-midi' : 'Bonsoir'
-  const activeOrders = orders.filter((o) => isActiveOrder(o.status))
-  const completedOrders = orders.filter((o) => o.status === 'delivered')
+  const firstName =
+    profile?.first_name?.trim() || 'Utilisateur'
+
+  const currentHour = new Date().getHours()
+
+  const greeting =
+    currentHour < 12
+      ? 'Bonjour'
+      : currentHour < 18
+        ? 'Bon après-midi'
+        : 'Bonsoir'
+
+  const cleanSearch = search.trim()
 
   return (
-    <ScrollView
+    <FlatList
       style={styles.screen}
       contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
-    >
-      {/* Greeting */}
-      <View style={styles.greetingRow}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.greetingTitle}>
-            {greeting}, {firstName} 👋
-          </Text>
-          <Text style={styles.greetingSubtitle}>Trouvez et commandez vos médicaments rapidement.</Text>
-        </View>
-      </View>
-      <View style={styles.openBadge}>
-        <View style={styles.openDot} />
-        <Text style={styles.openBadgeText}>247 pharmacies ouvertes</Text>
-      </View>
-
-      {/* Search bar */}
-      <View style={styles.searchBar}>
-        <Icon name="search" size={20} color={colors.textMuted} />
-        <TextInput
-          style={styles.searchInput}
-          value={search}
-          onChangeText={setSearch}
-          onSubmitEditing={() => goSearch(search)}
-          placeholder="Rechercher un médicament (ex: Doliprane)..."
-          placeholderTextColor={colors.textMuted}
-          returnKeyType="search"
+      data={medicines}
+      keyExtractor={(medicine) =>
+        medicine.id.toString()
+      }
+      numColumns={2}
+      columnWrapperStyle={styles.columnWrapper}
+      showsVerticalScrollIndicator={false}
+      keyboardDismissMode="on-drag"
+      keyboardShouldPersistTaps="handled"
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          tintColor={colors.primary}
+          colors={[colors.primary]}
         />
-        <View style={styles.locationChip}>
-          <Icon name="location_on" size={14} color={colors.textSecondary} />
-          <Text style={styles.locationChipText}>Casablanca</Text>
-        </View>
-      </View>
-      <Pressable style={styles.searchButton} onPress={() => goSearch(search)}>
-        <Text style={styles.searchButtonText}>Rechercher</Text>
-      </Pressable>
+      }
+      ListHeaderComponent={
+        <View style={styles.header}>
+          {/* Greeting and cart */}
+          <View style={styles.topRow}>
+            <View style={styles.greetingContainer}>
+              <Text style={styles.greetingTitle}>
+                {greeting}, {firstName} 👋
+              </Text>
 
-      {/* Quick search chips */}
-      <View style={styles.chipsRow}>
-        <Text style={styles.chipsLabel}>Recherches fréquentes:</Text>
-        {QUICK_SEARCHES.map((q) => (
-          <Pressable key={q} style={styles.chip} onPress={() => goSearch(q)}>
-            <Text style={styles.chipText}>{q}</Text>
-          </Pressable>
-        ))}
-      </View>
-
-      {/* Stats row */}
-      <View style={styles.statsRow}>
-        <StatCard icon="shopping_bag" label="Total commandes" value={orders.length} color={colors.primary} bg="#eff6ff" />
-        <StatCard icon="pending" label="En cours" value={activeOrders.length} color="#d97706" bg="#fffbeb" />
-        <StatCard icon="check_circle" label="Livrées" value={completedOrders.length} color="#16a34a" bg="#f0fdf4" />
-      </View>
-
-      {/* PharmAgent entry point -- new AI assistant feature, given its own
-          prominent card rather than folded into the quick-actions grid
-          below, since it's a differentiator worth surfacing clearly. */}
-      <Pressable onPress={() => navigation.navigate('Assistant')}>
-        <LinearGradient
-          colors={[colors.primary, '#00687a']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.assistantCard}
-        >
-          <View style={styles.assistantIcon}>
-            <Icon name="smart_toy" size={22} color={colors.white} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.assistantTitle}>Assistant IA PharmAgent</Text>
-            <Text style={styles.assistantSubtitle}>
-              Décrivez vos symptômes, obtenez un conseil et la pharmacie la plus proche
-            </Text>
-          </View>
-          <Icon name="chevron_right" size={20} color="#ffffffcc" />
-        </LinearGradient>
-      </Pressable>
-      
-
-      {/* Quick actions */}
-      <View style={styles.actionsGrid}>
-        {QUICK_ACTIONS.map((a) => (
-          <Pressable key={a.label} style={styles.actionCard} onPress={() => goQuickAction(a.label)}>
-            <View style={[styles.actionIcon, { backgroundColor: a.bg }]}>
-              <Icon name={a.icon} size={20} color={a.color} />
+              <Text style={styles.greetingSubtitle}>
+                Trouvez facilement les médicaments
+                dont vous avez besoin.
+              </Text>
             </View>
-            <Text style={styles.actionLabel}>{a.label}</Text>
-          </Pressable>
-        ))}
-      </View>
 
-      {/* Recent orders */}
-      <View style={styles.ordersCard}>
-        <View style={styles.ordersHeader}>
-          <View style={styles.ordersHeaderTitle}>
-            <Icon name="receipt_long" size={18} color={colors.primary} />
-            <Text style={styles.ordersHeaderText}>Commandes récentes</Text>
-          </View>
-          <Pressable style={styles.seeAllLink} onPress={() => navigation.navigate('Orders')}>
-            <Text style={styles.seeAllText}>Voir tout</Text>
-            <Icon name="arrow_forward" size={14} color={colors.secondary} />
-          </Pressable>
-        </View>
+            <Pressable
+              style={({ pressed }) => [
+                styles.cartButton,
+                pressed && styles.pressed,
+              ]}
+              onPress={() =>
+                navigation.navigate('Cart')
+              }
+              accessibilityLabel="Ouvrir le panier"
+            >
+              <Icon
+                name="shopping_cart"
+                size={22}
+                color={colors.primary}
+              />
 
-        {orders.length === 0 ? (
-          <View style={styles.emptyState}>
-            <View style={styles.emptyIcon}>
-              <Icon name="shopping_bag" size={28} color={colors.textMuted} />
-            </View>
-            <Text style={styles.emptyText}>Aucune commande pour l'instant</Text>
-            <Pressable style={styles.emptyLink} onPress={() => navigation.navigate('Search', undefined)}>
-              <Icon name="add" size={14} color={colors.primary} />
-              <Text style={styles.emptyLinkText}>Passer une commande</Text>
+              {cartCount > 0 && (
+                <View style={styles.cartBadge}>
+                  <Text
+                    style={styles.cartBadgeText}
+                  >
+                    {cartCount > 99
+                      ? '99+'
+                      : cartCount}
+                  </Text>
+                </View>
+              )}
             </Pressable>
           </View>
-        ) : (
-          orders.map((order) => {
-            const statusColor = STATUS_COLOR[order.status]
-            return (
-              <Pressable
-                key={order.id}
-                style={styles.orderRow}
-                onPress={() => navigation.navigate('OrderDetail', { id: order.id })}
-              >
-                <View style={styles.orderLeft}>
-                  <View style={styles.orderIcon}>
-                    <Icon name="receipt" size={16} color={colors.primary} />
-                  </View>
-                  <View>
-                    <Text style={styles.orderTitle}>Commande #{order.id}</Text>
-                    <Text style={styles.orderDate}>
-                      {new Date(order.created_at).toLocaleDateString('fr-MA', {
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric',
-                      })}
-                    </Text>
-                  </View>
-                </View>
-                <View style={styles.orderRight}>
-                  <View style={[styles.statusPill, { backgroundColor: statusColor.bg }]}>
-                    <Text style={[styles.statusPillText, { color: statusColor.text }]}>
-                      {STATUS_LABELS[order.status]}
-                    </Text>
-                  </View>
-                  <Text style={styles.orderTotal}>{order.grand_total} MAD</Text>
-                  <Icon name="chevron_right" size={16} color={colors.textMuted} />
-                </View>
-              </Pressable>
-            )
-          })
-        )}
-      </View>
-    </ScrollView>
-  )
-}
 
-function StatCard({ icon, label, value, color, bg }: { icon: string; label: string; value: number; color: string; bg: string }) {
-  return (
-    <View style={styles.statCard}>
-      <View style={[styles.statIcon, { backgroundColor: bg }]}>
-        <Icon name={icon} size={20} color={color} />
-      </View>
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
-    </View>
+          {/* Search bar */}
+          <View style={styles.searchBar}>
+            <Icon
+              name="search"
+              size={21}
+              color={colors.textMuted}
+            />
+
+            <TextInput
+              style={styles.searchInput}
+              value={search}
+              onChangeText={setSearch}
+              placeholder="Rechercher un médicament..."
+              placeholderTextColor={
+                colors.textMuted
+              }
+              returnKeyType="search"
+              autoCorrect={false}
+              autoCapitalize="none"
+              accessibilityLabel="Rechercher un médicament"
+            />
+
+            {searching ? (
+              <ActivityIndicator
+                size="small"
+                color={colors.primary}
+              />
+            ) : search.length > 0 ? (
+              <Pressable
+                onPress={clearSearch}
+                hitSlop={8}
+                accessibilityLabel="Effacer la recherche"
+              >
+                <Icon
+                  name="close"
+                  size={19}
+                  color={colors.textMuted}
+                />
+              </Pressable>
+            ) : null}
+          </View>
+
+          {/* PharmAgent */}
+          <Pressable
+            onPress={() =>
+              navigation.navigate('Assistant')
+            }
+            style={({ pressed }) => [
+              pressed && styles.pressed,
+            ]}
+            accessibilityLabel="Ouvrir PharmAgent"
+          >
+            <LinearGradient
+              colors={[
+                colors.primary,
+                colors.secondary,
+              ]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.assistantCard}
+            >
+              <View style={styles.assistantIcon}>
+                <Icon
+                  name="smart_toy"
+                  size={25}
+                  color={colors.white}
+                />
+              </View>
+
+              <View
+                style={styles.assistantContent}
+              >
+                <Text
+                  style={styles.assistantTitle}
+                >
+                  Assistant IA PharmAgent
+                </Text>
+
+                <Text
+                  style={
+                    styles.assistantSubtitle
+                  }
+                >
+                  Décrivez vos symptômes et obtenez
+                  une assistance pharmaceutique.
+                </Text>
+              </View>
+
+              <Icon
+                name="chevron_right"
+                size={23}
+                color="#ffffffcc"
+              />
+            </LinearGradient>
+          </Pressable>
+
+          {/* Medicines section heading */}
+          <View style={styles.sectionHeader}>
+            <View style={styles.sectionText}>
+              <Text style={styles.sectionTitle}>
+                {cleanSearch
+                  ? 'Résultats de recherche'
+                  : 'Médicaments'}
+              </Text>
+
+              <Text
+                style={styles.sectionSubtitle}
+                numberOfLines={1}
+              >
+                {cleanSearch
+                  ? `Résultats pour « ${cleanSearch} »`
+                  : 'Découvrez les médicaments disponibles'}
+              </Text>
+            </View>
+
+            <View style={styles.countBadge}>
+              <Text style={styles.countText}>
+                {medicineCount}
+              </Text>
+            </View>
+          </View>
+
+          {/* Error message */}
+          {error && (
+            <View style={styles.errorContainer}>
+              <Icon
+                name="error_outline"
+                size={20}
+                color={colors.error}
+              />
+
+              <Text style={styles.errorText}>
+                {error}
+              </Text>
+            </View>
+          )}
+        </View>
+      }
+      renderItem={({ item }) => {
+        const quantity =
+          getMedicineQuantity(item.id)
+
+        return (
+          <View style={styles.cardWrapper}>
+           <MedicineGridCard
+             medicine={item}
+             quantity={quantity}
+             onAdd={() =>
+              handleAddMedicine(item)
+             }
+               onIncrease={() =>
+               handleIncreaseMedicine(item)
+               }
+               onDecrease={() =>
+               handleDecreaseMedicine(item)
+               }
+                onPress={() =>
+               navigation.navigate(
+               'MedicineDetails',
+              {
+              id: item.id,
+                },
+              )
+             }
+            /> 
+          </View>
+        )
+      }}
+      ListEmptyComponent={
+        !error && !searching ? (
+          <View style={styles.emptyContainer}>
+            <View style={styles.emptyIcon}>
+              <Icon
+                name={
+                  cleanSearch
+                    ? 'search_off'
+                    : 'medication'
+                }
+                size={36}
+                color={colors.textMuted}
+              />
+            </View>
+
+            <Text style={styles.emptyTitle}>
+              {cleanSearch
+                ? 'Aucun résultat'
+                : 'Aucun médicament'}
+            </Text>
+
+            <Text style={styles.emptySubtitle}>
+              {cleanSearch
+                ? `Aucun médicament ne correspond à « ${cleanSearch} ».`
+                : "Aucun médicament n'est disponible pour le moment."}
+            </Text>
+
+            {cleanSearch && (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.clearSearchButton,
+                  pressed && styles.pressed,
+                ]}
+                onPress={clearSearch}
+              >
+                <Text
+                  style={
+                    styles.clearSearchButtonText
+                  }
+                >
+                  Effacer la recherche
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        ) : null
+      }
+      ListFooterComponent={
+        searching && medicines.length > 0 ? (
+          <View style={styles.footerLoader}>
+            <ActivityIndicator
+              size="small"
+              color={colors.primary}
+            />
+
+            <Text
+              style={styles.footerLoaderText}
+            >
+              Recherche en cours...
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.footerSpace} />
+        )
+      }
+    />
   )
 }
 
 const styles = StyleSheet.create({
-  loadingScreen: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface },
-  screen: { flex: 1, backgroundColor: colors.surface },
-  content: { padding: 16, paddingBottom: 40, gap: 12 },
-  greetingRow: { flexDirection: 'row', alignItems: 'flex-end' },
-  greetingTitle: { fontSize: 22, fontWeight: '800', color: colors.textPrimary },
-  greetingSubtitle: { fontSize: 13, color: colors.textSecondary, marginTop: 4 },
-  openBadge: {
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#f0fdf4',
-    borderWidth: 1,
-    borderColor: '#bbf7d0',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-  },
-  openDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#22c55e' },
-  openBadgeText: { fontSize: 12, fontWeight: '600', color: '#15803d' },
-  searchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: colors.surfaceLowest,
-    borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    height: 52,
-  },
-  searchInput: { flex: 1, fontSize: 14, color: colors.textPrimary },
-  locationChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  locationChipText: { fontSize: 11, fontWeight: '600', color: colors.textSecondary },
-  searchButton: {
-    backgroundColor: colors.primary,
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  searchButtonText: { color: colors.white, fontSize: 14, fontWeight: '700' },
-  chipsRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
-  chipsLabel: { fontSize: 11, fontWeight: '600', color: colors.textMuted },
-  chip: {
-    backgroundColor: colors.surfaceLowest,
-    borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 999,
-  },
-  chipText: { fontSize: 11, color: colors.textSecondary },
-  statsRow: { flexDirection: 'row', gap: 10 },
-  statCard: {
+  screen: {
     flex: 1,
-    backgroundColor: colors.surfaceLowest,
+    backgroundColor: colors.surface,
+  },
+
+  content: {
+    flexGrow: 1,
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    paddingBottom: 32,
+  },
+
+  loadingScreen: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    backgroundColor: colors.surface,
+  },
+
+  loadingText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+  },
+
+  header: {
+    gap: 17,
+    marginBottom: 16,
+  },
+
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+
+  greetingContainer: {
+    flex: 1,
+  },
+
+  greetingTitle: {
+    fontSize: 23,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+
+  greetingSubtitle: {
+    marginTop: 5,
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.textSecondary,
+  },
+
+  cartButton: {
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.outlineVariant,
-    borderRadius: 16,
-    padding: 12,
-    gap: 6,
+    backgroundColor: colors.white,
+    position: 'relative',
+
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.06,
+    shadowRadius: 7,
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    elevation: 2,
   },
-  statIcon: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  statValue: { fontSize: 20, fontWeight: '800', color: colors.textPrimary },
-  statLabel: { fontSize: 11, color: colors.textSecondary },
+
+  cartBadge: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    minWidth: 21,
+    height: 21,
+    paddingHorizontal: 5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: colors.surface,
+    backgroundColor: colors.error,
+  },
+
+  cartBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: colors.white,
+  },
+
+  searchBar: {
+    height: 54,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 15,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: colors.outlineVariant,
+    backgroundColor: colors.white,
+
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.05,
+    shadowRadius: 7,
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    elevation: 2,
+  },
+
+  searchInput: {
+    flex: 1,
+    height: '100%',
+    fontSize: 14,
+    color: colors.textPrimary,
+  },
+
   assistantCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    borderRadius: 18, padding: 16,
+    minHeight: 94,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 13,
+    padding: 16,
+    borderRadius: 20,
   },
+
   assistantIcon: {
-    width: 42, height: 42, borderRadius: 13, backgroundColor: '#ffffff26',
-    alignItems: 'center', justifyContent: 'center',
-  },
-  assistantTitle: { color: colors.white, fontWeight: '700', fontSize: 14 },
-  assistantSubtitle: { color: '#ffffffcc', fontSize: 11, marginTop: 3, lineHeight: 15 },
-  actionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  actionCard: {
-    width: '47%',
-    backgroundColor: colors.surfaceLowest,
-    borderWidth: 1,
-    borderColor: colors.outlineVariant,
+    width: 49,
+    height: 49,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderRadius: 16,
-    padding: 14,
+    backgroundColor: '#ffffff26',
+  },
+
+  assistantContent: {
+    flex: 1,
+  },
+
+  assistantTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.white,
+  },
+
+  assistantSubtitle: {
+    marginTop: 4,
+    fontSize: 11,
+    lineHeight: 16,
+    color: '#ffffffd1',
+  },
+
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+
+  sectionText: {
+    flex: 1,
+  },
+
+  sectionTitle: {
+    fontSize: 19,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+
+  sectionSubtitle: {
+    marginTop: 3,
+    fontSize: 12,
+    color: colors.textSecondary,
+  },
+
+  countBadge: {
+    minWidth: 36,
+    height: 30,
+    paddingHorizontal: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 15,
+    backgroundColor: '#eaf0ff',
+  },
+
+  countText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: colors.primary,
+  },
+
+  columnWrapper: {
+    gap: 12,
+  },
+
+  cardWrapper: {
+    flex: 1,
+    maxWidth: '48.5%',
+    marginBottom: 12,
+  },
+
+  errorContainer: {
+    flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-  },
-  actionIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  actionLabel: { fontSize: 12, fontWeight: '600', color: colors.textPrimary },
-  ordersCard: {
-    backgroundColor: colors.surfaceLowest,
+    padding: 12,
+    borderRadius: 13,
     borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    borderRadius: 16,
-    overflow: 'hidden',
+    borderColor: '#fecaca',
+    backgroundColor: colors.errorBg,
   },
-  ordersHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+
+  errorText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 17,
+    color: colors.errorText,
+  },
+
+  emptyContainer: {
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.outlineVariant,
+    paddingHorizontal: 28,
+    paddingVertical: 60,
   },
-  ordersHeaderTitle: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  ordersHeaderText: { fontSize: 14, fontWeight: '700', color: colors.textPrimary },
-  seeAllLink: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  seeAllText: { fontSize: 12, color: colors.secondary, fontWeight: '600' },
-  emptyState: { paddingVertical: 40, alignItems: 'center' },
+
   emptyIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 16,
-    backgroundColor: colors.surface,
+    width: 68,
+    height: 68,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 10,
+    marginBottom: 15,
+    borderRadius: 22,
+    backgroundColor: colors.white,
   },
-  emptyText: { fontSize: 13, color: colors.textSecondary },
-  emptyLink: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 10 },
-  emptyLinkText: { fontSize: 13, color: colors.primary, fontWeight: '600' },
-  orderRow: {
+
+  emptyTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+
+  emptySubtitle: {
+    marginTop: 7,
+    textAlign: 'center',
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.textSecondary,
+  },
+
+  clearSearchButton: {
+    marginTop: 17,
+    paddingHorizontal: 17,
+    paddingVertical: 11,
+    borderRadius: 12,
+    backgroundColor: colors.primary,
+  },
+
+  clearSearchButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.white,
+  },
+
+  footerLoader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.outlineVariant,
-  },
-  orderLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  orderIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 18,
   },
-  orderTitle: { fontSize: 13, fontWeight: '700', color: colors.textPrimary },
-  orderDate: { fontSize: 11, color: colors.textSecondary, marginTop: 2 },
-  orderRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  statusPill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
-  statusPillText: { fontSize: 10, fontWeight: '700' },
-  orderTotal: { fontSize: 13, fontWeight: '700', color: colors.textPrimary },
+
+  footerLoaderText: {
+    fontSize: 12,
+    color: colors.textSecondary,
+  },
+
+  footerSpace: {
+    height: 8,
+  },
+
+  pressed: {
+    opacity: 0.82,
+  },
 })

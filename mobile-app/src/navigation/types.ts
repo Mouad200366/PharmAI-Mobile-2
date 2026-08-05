@@ -11,7 +11,7 @@ export type AuthStackParamList = {
 
 export type AppTabParamList = {
   Dashboard: undefined
-  Search: { q?: string } | undefined
+  Assistant: undefined
   Orders: undefined
   Notifications: undefined
   Profile: undefined
@@ -22,11 +22,11 @@ export type AppTabParamList = {
 // not part of the primary nav).
 export type MainStackParamList = {
   Tabs: NavigatorScreenParams<AppTabParamList>
+  MedicineDetails: { id: number }
   Cart: undefined
   Checkout: undefined
   OrderDetail: { id: number }
   Addresses: undefined
-  Assistant: undefined
 }
 
 export type RootStackParamList = {
