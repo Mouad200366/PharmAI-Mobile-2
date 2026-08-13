@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   View, Text, StyleSheet, Pressable, TextInput, ScrollView,
   KeyboardAvoidingView, Platform,
 } from 'react-native'
 import { LinearGradient } from 'expo-linear-gradient'
+import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs'
 import Icon from '../../components/ui/Icon'
+import type { AppTabParamList } from '../../navigation/types'
 import { colors } from '../../theme/colors'
 import {
   streamAssist,
@@ -14,6 +16,8 @@ import {
 } from '../../api/pharmagent'
 
 // ─── Types (mirrors the web app's Assistant.tsx) ──────────────────
+
+type Props = BottomTabScreenProps<AppTabParamList, 'Assistant'>
 
 type AgentKey = 'triage' | 'medical' | 'pharmacy' | 'validator'
 type AgentStatus = 'idle' | 'active' | 'done'
@@ -75,6 +79,46 @@ function bubbleColors(status?: string) {
   return { bg: colors.surface, border: colors.outlineVariant }
 }
 
+
+/**
+ * PharmAgent is powered by an LLM, so a field that is normally a string
+ * can occasionally arrive as an object or an array at runtime. React
+ * Native cannot render a plain object inside <Text>, therefore every
+ * value shown in the chat is converted to readable text first.
+ */
+function toDisplayText(value: unknown): string {
+  if (value == null) return ''
+
+  if (typeof value === 'string') return value
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value)
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => toDisplayText(item))
+      .filter(Boolean)
+      .join('\n')
+  }
+
+  if (typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, nestedValue]) => {
+        const label = key
+          .replace(/_/g, ' ')
+          .replace(/\b\w/g, (letter) => letter.toUpperCase())
+        const text = toDisplayText(nestedValue)
+
+        return text ? `${label}: ${text}` : ''
+      })
+      .filter(Boolean)
+      .join('\n')
+  }
+
+  return String(value)
+}
+
 // ─── Screen ─────────────────────────────────────────────────────
 
 // Mobile port of the web app's Assistant.tsx, wiring the same standalone
@@ -89,7 +133,7 @@ function bubbleColors(status?: string) {
 // main focus. Markdown rendering (web uses a `renderMarkdown` lib) is
 // simplified to plain text for now -- no markdown dependency in this
 // project yet -- so `final_answer` shows as-is without headings/bold.
-export default function Assistant() {
+export default function Assistant({ navigation, route }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'welcome',
@@ -108,90 +152,214 @@ export default function Assistant() {
 
   const scrollRef = useRef<ScrollView>(null)
   const abortRef = useRef<(() => void) | null>(null)
+  const processedAutoRequests = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     return () => abortRef.current?.()
   }, [])
 
-  function resetPipeline() {
-    setAgentStatuses({ triage: 'idle', medical: 'idle', pharmacy: 'idle', validator: 'idle' })
+  const resetPipeline = useCallback(() => {
+    setAgentStatuses({
+      triage: 'idle',
+      medical: 'idle',
+      pharmacy: 'idle',
+      validator: 'idle',
+    })
     setFinalStatus(null)
-  }
+  }, [])
 
-  function markAgentActive(agentKey: string) {
-    setAgentStatuses((prev) => {
-      const next: Record<AgentKey, AgentStatus> = { ...prev }
-      ;(Object.keys(next) as AgentKey[]).forEach((k) => {
-        if (next[k] === 'active') next[k] = 'done'
-      })
-      const mapped = AGENT_MAP[agentKey]
-      if (mapped) next[mapped] = 'active'
-      return next
-    })
-  }
-
-  function finalizePipeline() {
-    setAgentStatuses((prev) => {
-      const next: Record<AgentKey, AgentStatus> = { ...prev }
-      ;(Object.keys(next) as AgentKey[]).forEach((k) => {
-        if (next[k] === 'active') next[k] = 'done'
-      })
-      return next
-    })
-  }
-
-  async function handleSend() {
-    const query = input.trim()
-    if (!query || sending) return
-
-    setMessages((m) => [...m, { id: genId(), role: 'user', kind: 'text', text: query }])
-    setInput('')
-    resetPipeline()
-    setSending(true)
-
-    const loadingId = genId()
-    setMessages((m) => [...m, { id: loadingId, role: 'assistant', kind: 'loading' }])
-
-    let finalData: AssistFinalPayload | null = null
-    let streamError: string | null = null
-
-    const { promise, abort } = streamAssist(
-      { user_query: query, has_prescription: hasPrescription },
-      (event) => {
-        if (event.type === 'agent_step') {
-          markAgentActive(event.agent)
-        } else if (event.type === 'final') {
-          finalData = event
-          finalizePipeline()
-          setFinalStatus(event.status)
-        } else if (event.type === 'error') {
-          streamError = event.error
-        }
-      },
-    )
-    abortRef.current = abort
-
-    try {
-      await promise
-      setMessages((m) => m.filter((msg) => msg.id !== loadingId))
-      if (streamError) {
-        setMessages((m) => [...m, { id: genId(), role: 'assistant', kind: 'text', text: `⚠️ ${streamError}` }])
-      } else if (finalData) {
-        setMessages((m) => [...m, { id: genId(), role: 'assistant', kind: 'response', response: finalData! }])
-      } else {
-        setMessages((m) => [...m, { id: genId(), role: 'assistant', kind: 'text', text: 'Hmm, aucune réponse reçue. Réessayez.' }])
+  const markAgentActive = useCallback((agentKey: string) => {
+    setAgentStatuses((previousStatuses) => {
+      const nextStatuses: Record<AgentKey, AgentStatus> = {
+        ...previousStatuses,
       }
-    } catch {
-      setMessages((m) => m.filter((msg) => msg.id !== loadingId))
-      setMessages((m) => [
-        ...m,
-        { id: genId(), role: 'assistant', kind: 'connection_error', text: "Impossible de joindre le serveur PharmAgent. Vérifiez qu'il est démarré." },
+
+      ;(Object.keys(nextStatuses) as AgentKey[]).forEach(
+        (key) => {
+          if (nextStatuses[key] === 'active') {
+            nextStatuses[key] = 'done'
+          }
+        },
+      )
+
+      const mappedAgent = AGENT_MAP[agentKey]
+
+      if (mappedAgent) {
+        nextStatuses[mappedAgent] = 'active'
+      }
+
+      return nextStatuses
+    })
+  }, [])
+
+  const finalizePipeline = useCallback(() => {
+    setAgentStatuses((previousStatuses) => {
+      const nextStatuses: Record<AgentKey, AgentStatus> = {
+        ...previousStatuses,
+      }
+
+      ;(Object.keys(nextStatuses) as AgentKey[]).forEach(
+        (key) => {
+          if (nextStatuses[key] === 'active') {
+            nextStatuses[key] = 'done'
+          }
+        },
+      )
+
+      return nextStatuses
+    })
+  }, [])
+
+  const sendQuery = useCallback(
+    async (query: string) => {
+      const normalizedQuery = query.trim()
+
+      if (!normalizedQuery || sending) {
+        return
+      }
+
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        {
+          id: genId(),
+          role: 'user',
+          kind: 'text',
+          text: normalizedQuery,
+        },
       ])
-    } finally {
-      setSending(false)
-      abortRef.current = null
-    }
+      setInput('')
+      resetPipeline()
+      setSending(true)
+
+      const loadingId = genId()
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        {
+          id: loadingId,
+          role: 'assistant',
+          kind: 'loading',
+        },
+      ])
+
+      let finalData: AssistFinalPayload | null = null
+      let streamError: string | null = null
+
+      const { promise, abort } = streamAssist(
+        {
+          user_query: normalizedQuery,
+          has_prescription: hasPrescription,
+        },
+        (event) => {
+          if (event.type === 'agent_step') {
+            markAgentActive(event.agent)
+          } else if (event.type === 'final') {
+            finalData = event
+            finalizePipeline()
+            setFinalStatus(event.status)
+          } else if (event.type === 'error') {
+            streamError = event.error
+          }
+        },
+      )
+      abortRef.current = abort
+
+      try {
+        await promise
+        setMessages((currentMessages) =>
+          currentMessages.filter(
+            (message) => message.id !== loadingId,
+          ),
+        )
+
+        if (streamError) {
+          setMessages((currentMessages) => [
+            ...currentMessages,
+            {
+              id: genId(),
+              role: 'assistant',
+              kind: 'text',
+              text: `⚠️ ${streamError}`,
+            },
+          ])
+        } else if (finalData !== null) {
+          const responseData: AssistFinalPayload = finalData
+
+          setMessages((currentMessages) => [
+            ...currentMessages,
+            {
+              id: genId(),
+              role: 'assistant',
+              kind: 'response',
+              response: responseData,
+            },
+          ])
+        } else {
+          setMessages((currentMessages) => [
+            ...currentMessages,
+            {
+              id: genId(),
+              role: 'assistant',
+              kind: 'text',
+              text: 'Hmm, aucune réponse reçue. Réessayez.',
+            },
+          ])
+        }
+      } catch {
+        setMessages((currentMessages) =>
+          currentMessages.filter(
+            (message) => message.id !== loadingId,
+          ),
+        )
+        setMessages((currentMessages) => [
+          ...currentMessages,
+          {
+            id: genId(),
+            role: 'assistant',
+            kind: 'connection_error',
+            text: "Impossible de joindre le serveur PharmAgent. Vérifiez qu'il est démarré.",
+          },
+        ])
+      } finally {
+        setSending(false)
+        abortRef.current = null
+      }
+    },
+    [
+      finalizePipeline,
+      hasPrescription,
+      markAgentActive,
+      resetPipeline,
+      sending,
+    ],
+  )
+
+  function handleSend() {
+    void sendQuery(input)
   }
+
+  useEffect(() => {
+    const autoRequest = route.params?.autoRequest
+
+    if (
+      !autoRequest ||
+      sending ||
+      processedAutoRequests.current.has(
+        autoRequest.requestId,
+      )
+    ) {
+      return
+    }
+
+    processedAutoRequests.current.add(
+      autoRequest.requestId,
+    )
+
+    navigation.setParams({
+      autoRequest: undefined,
+    })
+
+    void sendQuery(autoRequest.prompt)
+  }, [navigation, route.params?.autoRequest, sendQuery, sending])
 
   return (
     <KeyboardAvoidingView
@@ -351,7 +519,7 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
   return (
     <View style={styles.rowLeft}>
       <View style={[styles.bubbleResponse, { backgroundColor: bc.bg, borderColor: bc.border }]}>
-        <Text style={styles.bubbleAssistantText}>{data.final_answer}</Text>
+        <Text style={styles.bubbleAssistantText}>{toDisplayText(data.final_answer)}</Text>
 
         {data.status === 'APPROVED' && pharmacies.length > 0 && (
           <View style={{ gap: 8, marginTop: 10 }}>
@@ -375,14 +543,14 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
         )}
 
         {data.status === 'APPROVED' && pharmacies.length === 0 && !!data.pharmacy_summary && (
-          <Text style={styles.pharmacySummary}>🏥 {data.pharmacy_summary}</Text>
+          <Text style={styles.pharmacySummary}>🏥 {toDisplayText(data.pharmacy_summary)}</Text>
         )}
 
         {data.warnings?.length > 0 && (
           <View style={styles.warningsBox}>
             <Text style={styles.warningsTitle}>⚠️ Avertissements importants</Text>
             {data.warnings.map((w, i) => (
-              <Text key={i} style={styles.warningsItem}>• {w}</Text>
+              <Text key={i} style={styles.warningsItem}>• {toDisplayText(w)}</Text>
             ))}
           </View>
         )}
@@ -393,7 +561,7 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
             <View style={styles.citationsRow}>
               {data.citations.map((c, i) => (
                 <View key={i} style={styles.citationChip}>
-                  <Text style={styles.citationText}>{c}</Text>
+                  <Text style={styles.citationText}>{toDisplayText(c)}</Text>
                 </View>
               ))}
             </View>

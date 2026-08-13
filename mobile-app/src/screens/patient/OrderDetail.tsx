@@ -1,466 +1,1921 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import {
-  View, Text, StyleSheet, Pressable, ScrollView, TextInput,
-  ActivityIndicator, Alert, Platform,
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native'
-import { LinearGradient } from 'expo-linear-gradient'
-import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import { useFocusEffect } from '@react-navigation/native'
+import type { NativeStackScreenProps } from '@react-navigation/native-stack'
+
 import type { MainStackParamList } from '../../navigation/types'
-import { ordersApi, type Order, STATUS_LABELS, STATUS_COLOR, isActiveOrder } from '../../api/orders'
+import {
+  ordersApi,
+  STATUS_COLOR,
+  STATUS_LABELS,
+  type Order,
+  type OrderStatus,
+  type PrescriptionMode,
+} from '../../api/orders'
+import {
+  catalogApi,
+  type Medicine,
+} from '../../api/catalog'
+import { firstError } from '../../api/errors'
+import { useCartStore } from '../../store/cartStore'
 import Icon from '../../components/ui/Icon'
 import { colors } from '../../theme/colors'
 
-type Props = NativeStackScreenProps<MainStackParamList, 'OrderDetail'>
+type Props = NativeStackScreenProps<
+  MainStackParamList,
+  'OrderDetail'
+>
 
-const TIMELINE = [
-  { key: 'pending_review', label: 'Commande validée' },
-  { key: 'preparing', label: 'Préparation en pharmacie' },
-  { key: 'awaiting_agent', label: 'Agent assigné' },
-  { key: 'out_for_delivery', label: 'En transit', live: true },
-  { key: 'delivered', label: 'Livraison effectuée' },
-]
-
-const STATUS_ORDER = [
-  'pending_review', 'accepted', 'preparing',
-  'ready_for_pickup', 'awaiting_agent', 'picked_up',
-  'out_for_delivery', 'delivered',
-]
-
-function stepIndex(status: string) {
-  const idx = STATUS_ORDER.indexOf(status)
-  if (idx <= 1) return 0
-  if (idx <= 3) return 1
-  if (idx <= 4) return 2
-  if (idx <= 6) return 3
-  if (idx === 7) return 4
-  return -1
+type ProgressStep = {
+  key: string
+  label: string
+  description: string
+  icon: string
 }
 
-// Mobile port of the web app's OrderDetail.tsx -- but NOT a literal 1:1
-// layout port. The desktop version is a wide 3-column live-tracking layout
-// (timeline / map+agent / chat) built for a large screen; that doesn't fit
-// a phone. This reflows the same information into a single scrollable
-// column: status + actions, ETA (when live), timeline, a simplified
-// map/agent card, order summary, then chat. Live map tiles and the
-// WebSocket-driven chat are deferred per the README (same as web's
-// placeholder chat for now -- two canned messages when live, otherwise an
-// empty state), to be wired up once the socket client lands.
-export default function OrderDetail({ route, navigation }: Props) {
+type PreparedCartItem = {
+  medicine: Medicine
+  quantity: number
+}
+
+const CANCELLABLE_STATUSES: OrderStatus[] = [
+  'pending_payment',
+  'pending_review',
+  'accepted',
+  'preparing',
+]
+
+const REORDERABLE_STATUSES: OrderStatus[] = [
+  'delivered',
+  'cancelled',
+  'rejected',
+  'failed',
+]
+
+const TERMINAL_PROBLEM_STATUSES: OrderStatus[] = [
+  'cancelled',
+  'rejected',
+  'failed',
+]
+
+const PROGRESS_STEPS: ProgressStep[] = [
+  {
+    key: 'received',
+    label: 'Commande reçue',
+    description: 'Validation de la commande et de l’ordonnance.',
+    icon: 'receipt_long',
+  },
+  {
+    key: 'preparing',
+    label: 'Préparation',
+    description: 'La pharmacie rassemble vos médicaments.',
+    icon: 'inventory_2',
+  },
+  {
+    key: 'ready',
+    label: 'Prête pour livraison',
+    description: 'La commande attend sa prise en charge.',
+    icon: 'local_pharmacy',
+  },
+  {
+    key: 'delivery',
+    label: 'En livraison',
+    description: 'Votre commande se dirige vers votre adresse.',
+    icon: 'local_shipping',
+  },
+  {
+    key: 'delivered',
+    label: 'Livrée',
+    description: 'La livraison a été finalisée.',
+    icon: 'check_circle',
+  },
+]
+
+const STAGE_BY_STATUS: Partial<Record<OrderStatus, number>> = {
+  pending_payment: 0,
+  pending_review: 0,
+  accepted: 0,
+  preparing: 1,
+  ready_for_pickup: 2,
+  awaiting_agent: 2,
+  picked_up: 3,
+  out_for_delivery: 3,
+  delivered: 4,
+}
+
+const STATUS_DESCRIPTIONS: Record<OrderStatus, string> = {
+  pending_payment: 'Votre commande attend la confirmation du paiement.',
+  pending_review: 'La pharmacie vérifie les produits et les informations de votre ordonnance.',
+  rejected: 'La pharmacie n’a pas pu accepter cette commande.',
+  accepted: 'Votre commande a été acceptée et sera bientôt préparée.',
+  preparing: 'La pharmacie prépare actuellement vos médicaments.',
+  ready_for_pickup: 'Votre commande est prête à être remise au service de livraison.',
+  awaiting_agent: 'Un livreur disponible est recherché pour votre commande.',
+  picked_up: 'Le livreur a récupéré votre commande à la pharmacie.',
+  out_for_delivery: 'Votre commande est en route vers votre adresse.',
+  delivered: 'Votre commande a été livrée avec succès.',
+  cancelled: 'Cette commande a été annulée.',
+  failed: 'Cette commande n’a pas pu être finalisée.',
+}
+
+const PRESCRIPTION_MODE_LABELS: Record<PrescriptionMode, string> = {
+  none: 'Aucune ordonnance',
+  photo: 'Ordonnance envoyée en photo',
+  pickup: 'Ordonnance à présenter à la livraison',
+}
+
+const PRESCRIPTION_STATUS_CONFIG = {
+  pending: {
+    label: 'En cours de vérification',
+    icon: 'schedule',
+    color: '#a16207',
+    background: '#fefce8',
+  },
+  approved: {
+    label: 'Ordonnance approuvée',
+    icon: 'verified',
+    color: colors.success,
+    background: colors.successBg,
+  },
+  rejected: {
+    label: 'Ordonnance refusée',
+    icon: 'error',
+    color: colors.error,
+    background: colors.errorBg,
+  },
+} as const
+
+export default function OrderDetail({
+  route,
+  navigation,
+}: Props) {
   const { id } = route.params
+  const hasLoadedOnce = useRef(false)
+
   const [order, setOrder] = useState<Order | null>(null)
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [cancelling, setCancelling] = useState(false)
-  const [chatMsg, setChatMsg] = useState('')
+  const [reordering, setReordering] = useState(false)
 
-  const load = useCallback(async () => {
-    const r = await ordersApi.detail(id)
-    setOrder(r.data)
+  const cartItems = useCartStore((state) => state.items)
+  const addItem = useCartStore((state) => state.addItem)
+  const clearCart = useCartStore((state) => state.clearCart)
+
+  const loadOrder = useCallback(async () => {
+    try {
+      const response = await ordersApi.detail(id)
+      setOrder(response.data)
+      setLoadError(null)
+    } catch (error) {
+      setLoadError(getLoadErrorMessage(error))
+    }
   }, [id])
 
   useFocusEffect(
     useCallback(() => {
-      load().finally(() => setLoading(false))
-    }, [load]),
+      if (!hasLoadedOnce.current) {
+        setLoading(true)
+      }
+
+      void loadOrder().finally(() => {
+        hasLoadedOnce.current = true
+        setLoading(false)
+      })
+    }, [loadOrder]),
   )
 
-  function confirmCancel() {
-    Alert.alert('Annuler cette commande ?', undefined, [
-      { text: 'Non', style: 'cancel' },
-      { text: 'Oui, annuler', style: 'destructive', onPress: handleCancel },
-    ])
-  }
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true)
+    await loadOrder()
+    setRefreshing(false)
+  }, [loadOrder])
 
-  async function handleCancel() {
-    if (!order) return
+  const handleRetry = useCallback(async () => {
+    setLoading(true)
+    await loadOrder()
+    setLoading(false)
+  }, [loadOrder])
+
+  const confirmCancel = useCallback(() => {
+    if (!order || cancelling) {
+      return
+    }
+
+    Alert.alert(
+      'Annuler cette commande ?',
+      'Cette action ne peut pas être annulée. La pharmacie sera informée immédiatement.',
+      [
+        {
+          text: 'Garder la commande',
+          style: 'cancel',
+        },
+        {
+          text: 'Oui, annuler',
+          style: 'destructive',
+          onPress: () => {
+            void handleCancel()
+          },
+        },
+      ],
+    )
+  }, [cancelling, order])
+
+  const handleCancel = useCallback(async () => {
+    if (!order) {
+      return
+    }
+
     setCancelling(true)
+
     try {
-      const r = await ordersApi.cancel(order.id)
-      setOrder(r.data)
-    } catch {
-      Alert.alert('Erreur', "Impossible d'annuler cette commande pour le moment.")
+      const response = await ordersApi.cancel(order.id)
+      setOrder(response.data)
+
+      Alert.alert(
+        'Commande annulée',
+        'La commande a été annulée avec succès.',
+      )
+    } catch (error) {
+      Alert.alert(
+        'Annulation impossible',
+        getActionErrorMessage(
+          error,
+          'Cette commande ne peut plus être annulée pour le moment.',
+        ),
+      )
     } finally {
       setCancelling(false)
     }
-  }
+  }, [order])
 
-  async function handleReorder() {
-    if (!order) return
-    try {
-      const r = await ordersApi.reorder(order.id)
-      navigation.replace('OrderDetail', { id: r.data.id })
-    } catch {
-      Alert.alert('Erreur', 'Impossible de recommander pour le moment.')
+  const addPreparedItemsToCart = useCallback(
+    (
+      preparedItems: PreparedCartItem[],
+      mode: 'replace' | 'merge',
+    ) => {
+      if (mode === 'replace') {
+        clearCart()
+      }
+
+      preparedItems.forEach(({ medicine, quantity }) => {
+        addItem(medicine, quantity)
+      })
+
+      navigation.navigate('Cart')
+    },
+    [addItem, clearCart, navigation],
+  )
+
+  const handleReorder = useCallback(async () => {
+    if (!order || reordering) {
+      return
     }
-  }
+
+    setReordering(true)
+
+    try {
+      const preparedItems = await Promise.all(
+        order.items.map(async (item) => {
+          const response = await catalogApi.detail(item.medicine)
+
+          return {
+            medicine: response.data,
+            quantity: item.quantity,
+          }
+        }),
+      )
+
+      if (preparedItems.length === 0) {
+        Alert.alert(
+          'Commande vide',
+          'Aucun médicament ne peut être ajouté au panier.',
+        )
+        return
+      }
+
+      const unavailableCount = preparedItems.filter(
+        ({ medicine }) => !medicine.is_available,
+      ).length
+
+      const continueToCart = (
+        mode: 'replace' | 'merge',
+      ) => {
+        addPreparedItemsToCart(preparedItems, mode)
+
+        if (unavailableCount > 0) {
+          setTimeout(() => {
+            Alert.alert(
+              'Disponibilité mise à jour',
+              `${unavailableCount} médicament${unavailableCount > 1 ? 's sont' : ' est'} actuellement indisponible${unavailableCount > 1 ? 's' : ''}. Vérifiez le panier avant de continuer.`,
+            )
+          }, 350)
+        }
+      }
+
+      if (cartItems.length === 0) {
+        continueToCart('replace')
+        return
+      }
+
+      const cartQuantity = cartItems.reduce(
+        (total, item) => total + item.quantity,
+        0,
+      )
+
+      Alert.alert(
+        'Votre panier contient déjà des articles',
+        `Le panier contient ${cartQuantity} article${cartQuantity > 1 ? 's' : ''}. Souhaitez-vous ajouter les médicaments de cette commande ou remplacer le panier ?`,
+        [
+          {
+            text: 'Annuler',
+            style: 'cancel',
+          },
+          {
+            text: 'Ajouter',
+            onPress: () => continueToCart('merge'),
+          },
+          {
+            text: 'Remplacer',
+            style: 'destructive',
+            onPress: () => continueToCart('replace'),
+          },
+        ],
+      )
+    } catch (error) {
+      Alert.alert(
+        'Impossible de préparer le panier',
+        getActionErrorMessage(
+          error,
+          'Les informations actuelles de certains médicaments n’ont pas pu être chargées. Réessayez dans un instant.',
+        ),
+      )
+    } finally {
+      setReordering(false)
+    }
+  }, [
+    addPreparedItemsToCart,
+    cartItems,
+    order,
+    reordering,
+  ])
 
   if (loading) {
-    return (
-      <View style={styles.centerScreen}>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
-    )
+    return <LoadingState />
   }
 
   if (!order) {
     return (
-      <View style={styles.centerScreen}>
-        <Icon name="receipt_long" size={48} color={colors.textMuted} />
-        <Text style={styles.notFoundText}>Commande introuvable.</Text>
-        <Pressable style={styles.backLink} onPress={() => navigation.goBack()}>
-          <Icon name="arrow_back" size={16} color={colors.primary} />
-          <Text style={styles.backLinkText}>Retour aux commandes</Text>
-        </Pressable>
-      </View>
+      <ErrorState
+        message={
+          loadError ??
+          'Cette commande est introuvable ou n’est plus accessible.'
+        }
+        onRetry={handleRetry}
+        onBack={() => navigation.goBack()}
+      />
     )
   }
 
-  const current = stepIndex(order.status)
-  const isLive = order.status === 'out_for_delivery' || order.status === 'picked_up'
-  const isCancelled = ['cancelled', 'failed', 'rejected'].includes(order.status)
-  const statusColor = STATUS_COLOR[order.status]
+  const statusColors = STATUS_COLOR[order.status]
+  const canCancel = CANCELLABLE_STATUSES.includes(order.status)
+  const canReorder = REORDERABLE_STATUSES.includes(order.status)
+  const isProblemStatus = TERMINAL_PROBLEM_STATUSES.includes(order.status)
+  const currentStage = STAGE_BY_STATUS[order.status] ?? -1
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      {/* Header row */}
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={styles.content}
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          tintColor={colors.primary}
+          colors={[colors.primary]}
+        />
+      }
+    >
       <View style={styles.headerRow}>
-        <View style={{ flex: 1, gap: 6 }}>
-          <Text style={styles.orderTitle}>Commande #{order.id}</Text>
-          <View style={[styles.statusBadge, { backgroundColor: statusColor.bg, alignSelf: 'flex-start' }]}>
-            <Text style={[styles.statusBadgeText, { color: statusColor.text }]}>
-              {STATUS_LABELS[order.status]}
-            </Text>
-          </View>
+        <View style={styles.headerTextContainer}>
+          <Text style={styles.eyebrow}>COMMANDE</Text>
+          <Text style={styles.orderTitle}>#{order.id}</Text>
+          <Text style={styles.orderDate}>
+            Passée le {formatDateTime(order.created_at)}
+          </Text>
         </View>
 
-        {isActiveOrder(order.status) && !isCancelled && (
-          <Pressable
-            style={styles.headerActionOutline}
-            onPress={confirmCancel}
-            disabled={cancelling || order.status === 'out_for_delivery'}
-          >
-            <Text style={styles.headerActionOutlineText}>
-              {cancelling ? 'Annulation…' : 'Annuler'}
-            </Text>
-          </Pressable>
-        )}
-        {(order.status === 'delivered' || order.status === 'cancelled') && (
-          <Pressable style={styles.headerActionFilled} onPress={handleReorder}>
-            <Text style={styles.headerActionFilledText}>Recommander</Text>
-          </Pressable>
-        )}
-      </View>
-
-      {/* ETA card */}
-      {isLive && (
-        <LinearGradient
-          colors={[colors.primary, '#00687a']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.etaCard}
+        <View
+          style={[
+            styles.statusBadge,
+            { backgroundColor: statusColors.bg },
+          ]}
         >
-          <View style={styles.etaHeader}>
-            <Icon name="schedule" size={18} color="#ffffffcc" />
-            <Text style={styles.etaLabel}>Arrivée estimée dans</Text>
-          </View>
-          <View style={styles.etaValueRow}>
-            <Text style={styles.etaValue}>12</Text>
-            <Text style={styles.etaUnit}>minutes</Text>
-          </View>
-          <View style={styles.etaFooter}>
-            <Text style={styles.etaFooterLabel}>Heure prévue :</Text>
-            <Text style={styles.etaFooterValue}>18:45</Text>
-          </View>
-        </LinearGradient>
-      )}
-
-      {/* Timeline */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>État de la commande</Text>
-
-        {isCancelled ? (
-          <View style={styles.cancelledState}>
-            <Icon name="cancel" size={40} color={colors.error} />
-            <Text style={styles.cancelledText}>{STATUS_LABELS[order.status]}</Text>
-          </View>
-        ) : (
-          <View style={{ gap: 18 }}>
-            {TIMELINE.map((step, idx) => {
-              const done = idx <= current
-              const active = idx === current
-              return (
-                <View key={step.key} style={styles.timelineRow}>
-                  <View style={styles.timelineDotWrap}>
-                    {active ? (
-                      <View style={styles.timelineDotActive} />
-                    ) : done ? (
-                      <View style={styles.timelineDotDone}>
-                        <Icon name="check" size={12} color={colors.primary} />
-                      </View>
-                    ) : (
-                      <View style={styles.timelineDotPending} />
-                    )}
-                    {idx < TIMELINE.length - 1 && <View style={styles.timelineLine} />}
-                  </View>
-                  <View style={{ flex: 1, paddingBottom: 2 }}>
-                    <View style={styles.timelineLabelRow}>
-                      <Text style={[
-                        styles.timelineLabel,
-                        active && { color: colors.primary },
-                        !done && !active && { color: colors.textMuted },
-                      ]}>
-                        {step.label}
-                      </Text>
-                      {active && step.live && (
-                        <View style={styles.liveTag}>
-                          <View style={styles.liveDot} />
-                          <Text style={styles.liveTagText}>LIVE</Text>
-                        </View>
-                      )}
-                    </View>
-                    {active && isLive && (
-                      <Text style={styles.timelineSub}>À ~1.2 km de votre adresse</Text>
-                    )}
-                    <Text style={styles.timelineTime}>
-                      {done && !active
-                        ? new Date(order.updated_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
-                        : active ? 'Maintenant' : 'En attente'}
-                    </Text>
-                  </View>
-                </View>
-              )
-            })}
-          </View>
-        )}
+          <View
+            style={[
+              styles.statusDot,
+              { backgroundColor: statusColors.text },
+            ]}
+          />
+          <Text
+            style={[
+              styles.statusBadgeText,
+              { color: statusColors.text },
+            ]}
+          >
+            {STATUS_LABELS[order.status]}
+          </Text>
+        </View>
       </View>
 
-      {/* Agent / tracking card */}
-      {isLive ? (
+      {loadError ? (
+        <InlineError
+          message={loadError}
+          onRetry={handleRefresh}
+        />
+      ) : null}
+
+      <View
+        style={[
+          styles.statusHero,
+          isProblemStatus && styles.problemHero,
+          order.status === 'delivered' && styles.successHero,
+        ]}
+      >
+        <View
+          style={[
+            styles.statusHeroIcon,
+            isProblemStatus && styles.problemHeroIcon,
+            order.status === 'delivered' && styles.successHeroIcon,
+          ]}
+        >
+          <Icon
+            name={getStatusIcon(order.status)}
+            size={28}
+            color={
+              isProblemStatus
+                ? colors.error
+                : order.status === 'delivered'
+                  ? colors.success
+                  : colors.primary
+            }
+          />
+        </View>
+
+        <View style={styles.statusHeroContent}>
+          <Text style={styles.statusHeroTitle}>
+            {STATUS_LABELS[order.status]}
+          </Text>
+          <Text style={styles.statusHeroDescription}>
+            {STATUS_DESCRIPTIONS[order.status]}
+          </Text>
+          <Text style={styles.lastUpdateText}>
+            Dernière mise à jour : {formatDateTime(order.updated_at)}
+          </Text>
+        </View>
+      </View>
+
+      {!isProblemStatus ? (
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Votre livreur</Text>
-          <View style={styles.agentRow}>
-            <View style={styles.agentAvatar}>
-              <Text style={styles.agentAvatarText}>KM</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.agentName}>Khalid Mansouri</Text>
-              <View style={styles.agentMetaRow}>
-                <Icon name="two_wheeler" size={13} color={colors.textSecondary} />
-                <Text style={styles.agentMeta}>Honda PCX · 1234-A-56</Text>
-                <Icon name="star" size={13} color="#fbbf24" />
-                <Text style={styles.agentMeta}>4.9</Text>
-              </View>
-            </View>
-            <Pressable style={styles.callBtn}>
-              <Icon name="call" size={18} color={colors.primary} />
-            </Pressable>
+          <SectionHeader
+            icon="timeline"
+            title="Progression de la commande"
+            subtitle="Les étapes sont mises à jour par la pharmacie et le livreur."
+          />
+
+          <View style={styles.timelineContainer}>
+            {PROGRESS_STEPS.map((step, index) => (
+              <ProgressTimelineItem
+                key={step.key}
+                step={step}
+                index={index}
+                isLast={index === PROGRESS_STEPS.length - 1}
+                state={getProgressState(index, currentStage, order.status)}
+              />
+            ))}
           </View>
         </View>
       ) : (
-        <View style={styles.trackingPlaceholder}>
-          <Icon name="local_shipping" size={32} color={colors.primary} />
-          <Text style={styles.trackingTitle}>Suivi en direct disponible</Text>
-          <Text style={styles.trackingSubtitle}>
-            Le livreur sera tracé en temps réel une fois en route.
-          </Text>
-        </View>
+        <ProblemDetails order={order} />
       )}
 
-      {/* Order summary */}
+      <TrackingCard status={order.status} />
+
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Détails de la commande</Text>
-        <View style={{ gap: 10 }}>
-          {order.items.map((item) => (
-            <View key={item.id} style={styles.itemRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.itemName}>{item.medicine_name}</Text>
-                <Text style={styles.itemPrice}>{item.line_total} MAD</Text>
+        <SectionHeader
+          icon="medication"
+          title="Médicaments"
+          subtitle={`${getTotalQuantity(order)} article${getTotalQuantity(order) > 1 ? 's' : ''} dans cette commande`}
+        />
+
+        <View style={styles.itemsList}>
+          {order.items.map((item, index) => (
+            <View
+              key={item.id}
+              style={[
+                styles.itemRow,
+                index > 0 && styles.itemRowBorder,
+              ]}
+            >
+              <View style={styles.itemIconContainer}>
+                <Icon
+                  name="medication"
+                  size={20}
+                  color={colors.primary}
+                />
               </View>
-              <Text style={styles.itemQty}>×{item.quantity}</Text>
+
+              <View style={styles.itemInformation}>
+                <Text style={styles.itemName}>
+                  {item.medicine_name}
+                </Text>
+                <Text style={styles.itemCalculation}>
+                  {item.quantity} × {formatPrice(item.unit_price)}
+                </Text>
+              </View>
+
+              <Text style={styles.itemTotal}>
+                {formatPrice(item.line_total)}
+              </Text>
             </View>
           ))}
         </View>
-        <View style={styles.divider} />
-        <View style={styles.summaryLine}>
-          <Text style={styles.summaryLabel}>Livraison</Text>
-          <Text style={styles.summaryValue}>{order.delivery_fee} MAD</Text>
-        </View>
-        <View style={styles.summaryLine}>
-          <Text style={styles.totalLabel}>Total à payer</Text>
-          <Text style={styles.totalValue}>{order.grand_total} MAD</Text>
-        </View>
-        <View style={styles.summaryLine}>
-          <Text style={styles.summaryLabel}>Mode de paiement</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            <Icon name="payments" size={14} color={colors.textSecondary} />
-            <Text style={styles.summaryValue}>{order.payment_method === 'cash' ? 'Espèces' : 'Carte'}</Text>
-          </View>
+
+        <View style={styles.priceDivider} />
+
+        <PriceLine
+          label="Sous-total"
+          value={formatPrice(order.items_total)}
+        />
+        <PriceLine
+          label="Frais de livraison"
+          value={formatPrice(order.delivery_fee)}
+        />
+
+        <View style={styles.totalRow}>
+          <Text style={styles.totalLabel}>Total</Text>
+          <Text style={styles.totalValue}>
+            {formatPrice(order.grand_total)}
+          </Text>
         </View>
       </View>
 
-      {/* Chat */}
       <View style={styles.card}>
-        <View style={styles.chatHeader}>
-          <Icon name="forum" size={18} color={colors.primary} />
-          <Text style={styles.cardTitle}>{isLive ? 'Chat avec le livreur' : 'Messages'}</Text>
-        </View>
+        <SectionHeader
+          icon="local_shipping"
+          title="Livraison et paiement"
+          subtitle="Informations utilisées lors de la validation de la commande."
+        />
 
-        {isLive ? (
-          <View style={{ gap: 10 }}>
-            <View style={styles.bubbleLeft}>
-              <Text style={styles.bubbleLeftText}>
-                Bonjour, je viens de récupérer votre commande à la pharmacie. J'arrive dans environ 15 minutes.
-              </Text>
-            </View>
-            <View style={styles.bubbleRight}>
-              <Text style={styles.bubbleRightText}>
-                Parfait, merci. Je suis chez moi, sonnez à l'interphone 14.
-              </Text>
-            </View>
-          </View>
-        ) : (
-          <View style={styles.chatEmpty}>
-            <Icon name="chat" size={28} color={colors.textMuted} />
-            <Text style={styles.chatEmptyText}>
-              Le chat sera disponible une fois le livreur assigné.
+        <InformationRow
+          icon="location_on"
+          label="Adresse de livraison"
+          value={order.delivery_address}
+          multiline
+        />
+
+        <InformationRow
+          icon="payments"
+          label="Mode de paiement"
+          value={
+            order.payment_method === 'cash'
+              ? 'Paiement en espèces à la livraison'
+              : 'Paiement par carte'
+          }
+        />
+
+        <InformationRow
+          icon="event"
+          label="Date de commande"
+          value={formatDateTime(order.created_at)}
+        />
+      </View>
+
+      <PrescriptionCard order={order} />
+
+      {order.notes.trim() ? (
+        <View style={styles.card}>
+          <SectionHeader
+            icon="notes"
+            title="Note de la commande"
+          />
+          <View style={styles.notesContainer}>
+            <Text style={styles.notesText}>
+              {order.notes.trim()}
             </Text>
           </View>
-        )}
+        </View>
+      ) : null}
 
-        <View style={styles.chatInputRow}>
-          <TextInput
-            value={chatMsg}
-            onChangeText={setChatMsg}
-            editable={isLive}
-            placeholder="Écrire un message..."
-            placeholderTextColor={colors.textMuted}
-            style={[styles.chatInput, !isLive && { opacity: 0.5 }]}
-          />
-          <Pressable style={styles.sendBtn} disabled={!isLive || !chatMsg.trim()}>
-            <Icon name="send" size={16} color={colors.white} />
-          </Pressable>
+      <View style={styles.card}>
+        <SectionHeader
+          icon="forum"
+          title="Suivi et messagerie"
+          subtitle="La carte en temps réel et le chat seront connectés dans la prochaine étape."
+        />
+
+        <View style={styles.futureFeatureRow}>
+          <View style={styles.futureFeatureIcon}>
+            <Icon
+              name="map"
+              size={20}
+              color={colors.primary}
+            />
+          </View>
+          <View style={styles.futureFeatureTextContainer}>
+            <Text style={styles.futureFeatureTitle}>
+              Aucune information fictive
+            </Text>
+            <Text style={styles.futureFeatureText}>
+              Cette page affiche uniquement les données réellement disponibles dans votre commande.
+            </Text>
+          </View>
         </View>
       </View>
+
+      {(canCancel || canReorder) ? (
+        <View style={styles.actionsCard}>
+          <Text style={styles.actionsTitle}>
+            Actions disponibles
+          </Text>
+
+          {canReorder ? (
+            <Pressable
+              style={({ pressed }) => [
+                styles.primaryAction,
+                pressed && styles.buttonPressed,
+                reordering && styles.buttonDisabled,
+              ]}
+              onPress={() => {
+                void handleReorder()
+              }}
+              disabled={reordering}
+            >
+              {reordering ? (
+                <ActivityIndicator
+                  size="small"
+                  color={colors.white}
+                />
+              ) : (
+                <Icon
+                  name="shopping_cart"
+                  size={19}
+                  color={colors.white}
+                />
+              )}
+              <Text style={styles.primaryActionText}>
+                {reordering
+                  ? 'Préparation du panier…'
+                  : 'Ajouter à nouveau au panier'}
+              </Text>
+            </Pressable>
+          ) : null}
+
+          {canCancel ? (
+            <Pressable
+              style={({ pressed }) => [
+                styles.cancelAction,
+                pressed && styles.buttonPressed,
+                cancelling && styles.buttonDisabled,
+              ]}
+              onPress={confirmCancel}
+              disabled={cancelling}
+            >
+              {cancelling ? (
+                <ActivityIndicator
+                  size="small"
+                  color={colors.error}
+                />
+              ) : (
+                <Icon
+                  name="cancel"
+                  size={19}
+                  color={colors.error}
+                />
+              )}
+              <Text style={styles.cancelActionText}>
+                {cancelling
+                  ? 'Annulation…'
+                  : 'Annuler la commande'}
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
     </ScrollView>
   )
 }
 
+function LoadingState() {
+  return (
+    <View style={styles.centeredScreen}>
+      <View style={styles.centeredIconContainer}>
+        <Icon
+          name="receipt_long"
+          size={30}
+          color={colors.primary}
+        />
+      </View>
+      <ActivityIndicator
+        size="large"
+        color={colors.primary}
+      />
+      <Text style={styles.centeredTitle}>
+        Chargement de la commande
+      </Text>
+      <Text style={styles.centeredText}>
+        Nous récupérons les dernières informations.
+      </Text>
+    </View>
+  )
+}
+
+function ErrorState({
+  message,
+  onRetry,
+  onBack,
+}: {
+  message: string
+  onRetry: () => void
+  onBack: () => void
+}) {
+  return (
+    <View style={styles.centeredScreen}>
+      <View
+        style={[
+          styles.centeredIconContainer,
+          styles.centeredErrorIconContainer,
+        ]}
+      >
+        <Icon
+          name="receipt_long"
+          size={32}
+          color={colors.error}
+        />
+      </View>
+
+      <Text style={styles.centeredTitle}>
+        Impossible d’ouvrir la commande
+      </Text>
+      <Text style={styles.centeredText}>
+        {message}
+      </Text>
+
+      <Pressable
+        style={styles.retryButton}
+        onPress={onRetry}
+      >
+        <Icon
+          name="refresh"
+          size={18}
+          color={colors.white}
+        />
+        <Text style={styles.retryButtonText}>
+          Réessayer
+        </Text>
+      </Pressable>
+
+      <Pressable
+        style={styles.secondaryBackButton}
+        onPress={onBack}
+      >
+        <Icon
+          name="arrow_back"
+          size={17}
+          color={colors.primary}
+        />
+        <Text style={styles.secondaryBackButtonText}>
+          Retour aux commandes
+        </Text>
+      </Pressable>
+    </View>
+  )
+}
+
+function InlineError({
+  message,
+  onRetry,
+}: {
+  message: string
+  onRetry: () => void
+}) {
+  return (
+    <View style={styles.inlineError}>
+      <Icon
+        name="cloud_off"
+        size={19}
+        color={colors.error}
+      />
+      <Text style={styles.inlineErrorText}>
+        {message}
+      </Text>
+      <Pressable onPress={onRetry}>
+        <Text style={styles.inlineErrorAction}>
+          Réessayer
+        </Text>
+      </Pressable>
+    </View>
+  )
+}
+
+function SectionHeader({
+  icon,
+  title,
+  subtitle,
+}: {
+  icon: string
+  title: string
+  subtitle?: string
+}) {
+  return (
+    <View style={styles.sectionHeader}>
+      <View style={styles.sectionHeaderIcon}>
+        <Icon
+          name={icon}
+          size={19}
+          color={colors.primary}
+        />
+      </View>
+      <View style={styles.sectionHeaderTextContainer}>
+        <Text style={styles.sectionTitle}>
+          {title}
+        </Text>
+        {subtitle ? (
+          <Text style={styles.sectionSubtitle}>
+            {subtitle}
+          </Text>
+        ) : null}
+      </View>
+    </View>
+  )
+}
+
+function ProgressTimelineItem({
+  step,
+  index,
+  isLast,
+  state,
+}: {
+  step: ProgressStep
+  index: number
+  isLast: boolean
+  state: 'completed' | 'current' | 'upcoming'
+}) {
+  const isCompleted = state === 'completed'
+  const isCurrent = state === 'current'
+
+  return (
+    <View style={styles.timelineRow}>
+      <View style={styles.timelineRail}>
+        <View
+          style={[
+            styles.timelineCircle,
+            isCompleted && styles.timelineCircleCompleted,
+            isCurrent && styles.timelineCircleCurrent,
+          ]}
+        >
+          <Icon
+            name={isCompleted ? 'check' : step.icon}
+            size={isCompleted ? 15 : 16}
+            color={
+              isCompleted || isCurrent
+                ? colors.white
+                : colors.textMuted
+            }
+          />
+        </View>
+
+        {!isLast ? (
+          <View
+            style={[
+              styles.timelineLine,
+              isCompleted && styles.timelineLineCompleted,
+            ]}
+          />
+        ) : null}
+      </View>
+
+      <View
+        style={[
+          styles.timelineContent,
+          !isLast && styles.timelineContentSpacing,
+        ]}
+      >
+        <View style={styles.timelineTitleRow}>
+          <Text
+            style={[
+              styles.timelineTitle,
+              isCurrent && styles.timelineTitleCurrent,
+              state === 'upcoming' && styles.timelineTitleUpcoming,
+            ]}
+          >
+            {step.label}
+          </Text>
+
+          <View
+            style={[
+              styles.timelineStateBadge,
+              isCompleted && styles.completedBadge,
+              isCurrent && styles.currentBadge,
+            ]}
+          >
+            <Text
+              style={[
+                styles.timelineStateText,
+                isCompleted && styles.completedBadgeText,
+                isCurrent && styles.currentBadgeText,
+              ]}
+            >
+              {isCompleted
+                ? 'Terminée'
+                : isCurrent
+                  ? 'En cours'
+                  : 'À venir'}
+            </Text>
+          </View>
+        </View>
+
+        <Text
+          style={[
+            styles.timelineDescription,
+            state === 'upcoming' && styles.timelineDescriptionUpcoming,
+          ]}
+        >
+          {step.description}
+        </Text>
+      </View>
+    </View>
+  )
+}
+
+function TrackingCard({
+  status,
+}: {
+  status: OrderStatus
+}) {
+  const activeDelivery =
+    status === 'picked_up' ||
+    status === 'out_for_delivery'
+
+  const waitingForDelivery =
+    status === 'ready_for_pickup' ||
+    status === 'awaiting_agent'
+
+  if (
+    status === 'delivered' ||
+    TERMINAL_PROBLEM_STATUSES.includes(status)
+  ) {
+    return null
+  }
+
+  return (
+    <View style={styles.trackingCard}>
+      <View style={styles.trackingIconContainer}>
+        <Icon
+          name={activeDelivery ? 'near_me' : 'location_searching'}
+          size={26}
+          color={colors.primary}
+        />
+      </View>
+
+      <View style={styles.trackingContent}>
+        <Text style={styles.trackingTitle}>
+          {activeDelivery
+            ? 'Livraison en cours'
+            : waitingForDelivery
+              ? 'Préparation du suivi'
+              : 'Suivi en direct à venir'}
+        </Text>
+        <Text style={styles.trackingDescription}>
+          {activeDelivery
+            ? 'Le statut réel est disponible. La carte, la position du livreur et l’heure estimée seront connectées dans l’étape temps réel.'
+            : waitingForDelivery
+              ? 'Le suivi en direct deviendra disponible quand un livreur prendra en charge la commande.'
+              : 'La commande doit d’abord être préparée avant le démarrage du suivi de livraison.'}
+        </Text>
+      </View>
+    </View>
+  )
+}
+
+function ProblemDetails({
+  order,
+}: {
+  order: Order
+}) {
+  const rejectionReason =
+    order.prescription?.rejection_reason?.trim()
+
+  return (
+    <View style={[styles.card, styles.problemCard]}>
+      <SectionHeader
+        icon="info"
+        title="Informations sur cette commande"
+      />
+
+      <Text style={styles.problemCardText}>
+        {order.status === 'rejected'
+          ? 'La commande a été rejetée pendant la vérification.'
+          : order.status === 'failed'
+            ? 'La livraison ou le traitement de cette commande n’a pas pu être terminé.'
+            : 'La commande a été annulée avant sa livraison.'}
+      </Text>
+
+      {rejectionReason ? (
+        <View style={styles.rejectionReasonContainer}>
+          <Text style={styles.rejectionReasonLabel}>
+            Motif communiqué
+          </Text>
+          <Text style={styles.rejectionReasonText}>
+            {rejectionReason}
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  )
+}
+
+function InformationRow({
+  icon,
+  label,
+  value,
+  multiline = false,
+}: {
+  icon: string
+  label: string
+  value: string
+  multiline?: boolean
+}) {
+  return (
+    <View style={styles.informationRow}>
+      <View style={styles.informationIconContainer}>
+        <Icon
+          name={icon}
+          size={18}
+          color={colors.primary}
+        />
+      </View>
+
+      <View style={styles.informationTextContainer}>
+        <Text style={styles.informationLabel}>
+          {label}
+        </Text>
+        <Text
+          style={styles.informationValue}
+          numberOfLines={multiline ? undefined : 2}
+        >
+          {value}
+        </Text>
+      </View>
+    </View>
+  )
+}
+
+function PrescriptionCard({
+  order,
+}: {
+  order: Order
+}) {
+  if (order.prescription_mode === 'none') {
+    return (
+      <View style={styles.card}>
+        <SectionHeader
+          icon="description"
+          title="Ordonnance"
+        />
+        <InformationRow
+          icon="check_circle"
+          label="Mode sélectionné"
+          value={PRESCRIPTION_MODE_LABELS.none}
+        />
+      </View>
+    )
+  }
+
+  if (order.prescription_mode === 'pickup') {
+    return (
+      <View style={styles.card}>
+        <SectionHeader
+          icon="description"
+          title="Ordonnance"
+          subtitle="Conservez l’original disponible lors de la livraison."
+        />
+        <InformationRow
+          icon="assignment_ind"
+          label="Mode sélectionné"
+          value={PRESCRIPTION_MODE_LABELS.pickup}
+        />
+      </View>
+    )
+  }
+
+  const prescriptionStatus =
+    order.prescription?.status ?? 'pending'
+  const config =
+    PRESCRIPTION_STATUS_CONFIG[prescriptionStatus]
+
+  return (
+    <View style={styles.card}>
+      <SectionHeader
+        icon="description"
+        title="Ordonnance"
+        subtitle={PRESCRIPTION_MODE_LABELS.photo}
+      />
+
+      <View
+        style={[
+          styles.prescriptionStatus,
+          { backgroundColor: config.background },
+        ]}
+      >
+        <Icon
+          name={config.icon}
+          size={20}
+          color={config.color}
+        />
+        <Text
+          style={[
+            styles.prescriptionStatusText,
+            { color: config.color },
+          ]}
+        >
+          {config.label}
+        </Text>
+      </View>
+
+      {order.prescription?.verified_at ? (
+        <Text style={styles.prescriptionVerifiedAt}>
+          Vérifiée le {formatDateTime(order.prescription.verified_at)}
+        </Text>
+      ) : null}
+
+      {order.prescription?.rejection_reason?.trim() ? (
+        <View style={styles.rejectionReasonContainer}>
+          <Text style={styles.rejectionReasonLabel}>
+            Motif du refus
+          </Text>
+          <Text style={styles.rejectionReasonText}>
+            {order.prescription.rejection_reason.trim()}
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  )
+}
+
+function PriceLine({
+  label,
+  value,
+}: {
+  label: string
+  value: string
+}) {
+  return (
+    <View style={styles.priceLine}>
+      <Text style={styles.priceLineLabel}>
+        {label}
+      </Text>
+      <Text style={styles.priceLineValue}>
+        {value}
+      </Text>
+    </View>
+  )
+}
+
+function getProgressState(
+  stepIndex: number,
+  currentStage: number,
+  status: OrderStatus,
+): 'completed' | 'current' | 'upcoming' {
+  if (status === 'delivered') {
+    return 'completed'
+  }
+
+  if (stepIndex < currentStage) {
+    return 'completed'
+  }
+
+  if (stepIndex === currentStage) {
+    return 'current'
+  }
+
+  return 'upcoming'
+}
+
+function getStatusIcon(status: OrderStatus) {
+  const icons: Record<OrderStatus, string> = {
+    pending_payment: 'payments',
+    pending_review: 'fact_check',
+    rejected: 'cancel',
+    accepted: 'task_alt',
+    preparing: 'inventory_2',
+    ready_for_pickup: 'local_pharmacy',
+    awaiting_agent: 'person_search',
+    picked_up: 'two_wheeler',
+    out_for_delivery: 'local_shipping',
+    delivered: 'check_circle',
+    cancelled: 'cancel',
+    failed: 'error',
+  }
+
+  return icons[status]
+}
+
+function getTotalQuantity(order: Order) {
+  return order.items.reduce(
+    (total, item) => total + item.quantity,
+    0,
+  )
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    return 'Date indisponible'
+  }
+
+  const day = date.toLocaleDateString('fr-FR', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  })
+
+  const time = date.toLocaleTimeString('fr-FR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+
+  return `${day} à ${time}`
+}
+
+function formatPrice(value: string | number) {
+  const numberValue = Number(value)
+
+  if (Number.isNaN(numberValue)) {
+    return `${value} MAD`
+  }
+
+  return `${numberValue
+    .toFixed(2)
+    .replace('.', ',')} MAD`
+}
+
+function getLoadErrorMessage(error: unknown) {
+  const axiosLikeError = error as {
+    response?: unknown
+    message?: string
+  }
+
+  if (!axiosLikeError.response) {
+    return 'Impossible de contacter le serveur. Vérifiez la connexion au backend puis réessayez.'
+  }
+
+  return getActionErrorMessage(
+    error,
+    'Impossible de charger cette commande.',
+  )
+}
+
+function getActionErrorMessage(
+  error: unknown,
+  fallback: string,
+) {
+  const extracted = firstError(error)
+
+  if (
+    extracted === 'Une erreur est survenue. Réessayez.' ||
+    extracted === 'Une erreur est survenue.'
+  ) {
+    return fallback
+  }
+
+  return extracted
+}
+
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.surface },
-  content: { padding: 16, gap: 16, paddingBottom: 32 },
-  centerScreen: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, backgroundColor: colors.surface, padding: 24 },
-  notFoundText: { fontSize: 14, fontWeight: '600', color: colors.textPrimary },
-  backLink: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
-  backLinkText: { color: colors.primary, fontSize: 14, fontWeight: '600' },
+  screen: {
+    flex: 1,
+    backgroundColor: colors.surface,
+  },
+  content: {
+    padding: 16,
+    paddingBottom: 40,
+    gap: 16,
+  },
 
-  headerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  orderTitle: { fontSize: 20, fontWeight: '700', color: colors.primary },
-  statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
-  statusBadgeText: { fontSize: 12, fontWeight: '600' },
-  headerActionOutline: {
-    borderWidth: 1, borderColor: colors.outlineVariant, borderRadius: 10,
-    paddingHorizontal: 14, paddingVertical: 8,
+  centeredScreen: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 28,
+    gap: 10,
+    backgroundColor: colors.surface,
   },
-  headerActionOutlineText: { fontSize: 13, fontWeight: '600', color: colors.textSecondary },
-  headerActionFilled: {
-    backgroundColor: colors.primary, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8,
+  centeredIconContainer: {
+    width: 58,
+    height: 58,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#eef2ff',
+    marginBottom: 2,
   },
-  headerActionFilledText: { fontSize: 13, fontWeight: '600', color: colors.white },
+  centeredErrorIconContainer: {
+    backgroundColor: colors.errorBg,
+  },
+  centeredTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    textAlign: 'center',
+  },
+  centeredText: {
+    maxWidth: 330,
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  },
+  retryButton: {
+    minWidth: 150,
+    marginTop: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: colors.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  retryButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.white,
+  },
+  secondaryBackButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  secondaryBackButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.primary,
+  },
 
-  etaCard: { borderRadius: 16, padding: 16 },
-  etaHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
-  etaLabel: { fontSize: 11, color: '#ffffffcc', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: '600' },
-  etaValueRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },
-  etaValue: { fontSize: 40, fontWeight: '700', color: colors.white, lineHeight: 44 },
-  etaUnit: { fontSize: 15, color: '#ffffffe0' },
-  etaFooter: {
-    flexDirection: 'row', justifyContent: 'space-between', marginTop: 12, paddingTop: 12,
-    borderTopWidth: 1, borderTopColor: '#ffffff33',
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
   },
-  etaFooterLabel: { fontSize: 12, color: '#ffffffcc' },
-  etaFooterValue: { fontSize: 14, fontWeight: '700', color: colors.white },
+  headerTextContainer: {
+    flex: 1,
+  },
+  eyebrow: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    color: colors.textMuted,
+  },
+  orderTitle: {
+    marginTop: 2,
+    fontSize: 28,
+    lineHeight: 32,
+    fontWeight: '800',
+    color: colors.primary,
+  },
+  orderDate: {
+    marginTop: 5,
+    fontSize: 12,
+    color: colors.textSecondary,
+  },
+  statusBadge: {
+    maxWidth: '52%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 999,
+  },
+  statusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  statusBadgeText: {
+    flexShrink: 1,
+    fontSize: 11,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+
+  inlineError: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: 12,
+    backgroundColor: colors.errorBg,
+  },
+  inlineErrorText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 17,
+    color: colors.errorText,
+  },
+  inlineErrorAction: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: colors.error,
+  },
+
+  statusHero: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 13,
+    padding: 16,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+    backgroundColor: '#eef2ff',
+  },
+  problemHero: {
+    borderColor: '#fecaca',
+    backgroundColor: colors.errorBg,
+  },
+  successHero: {
+    borderColor: '#bbf7d0',
+    backgroundColor: colors.successBg,
+  },
+  statusHeroIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.white,
+  },
+  problemHeroIcon: {
+    backgroundColor: '#fff5f5',
+  },
+  successHeroIcon: {
+    backgroundColor: '#f7fff9',
+  },
+  statusHeroContent: {
+    flex: 1,
+  },
+  statusHeroTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+  statusHeroDescription: {
+    marginTop: 4,
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.textSecondary,
+  },
+  lastUpdateText: {
+    marginTop: 8,
+    fontSize: 10,
+    fontWeight: '600',
+    color: colors.textMuted,
+  },
 
   card: {
-    backgroundColor: colors.surfaceLowest, borderRadius: 16,
-    borderWidth: 1, borderColor: colors.outlineVariant, padding: 16, gap: 12,
+    padding: 16,
+    gap: 14,
+    borderWidth: 1,
+    borderColor: colors.outlineVariant,
+    borderRadius: 18,
+    backgroundColor: colors.surfaceLowest,
   },
-  cardTitle: { fontSize: 15, fontWeight: '700', color: colors.primary },
-
-  cancelledState: { alignItems: 'center', paddingVertical: 24, gap: 8 },
-  cancelledText: { fontSize: 14, fontWeight: '600', color: colors.textSecondary },
-
-  timelineRow: { flexDirection: 'row', gap: 12 },
-  timelineDotWrap: { alignItems: 'center', width: 24 },
-  timelineDotActive: {
-    width: 16, height: 16, borderRadius: 8, backgroundColor: colors.primary,
-    borderWidth: 2, borderColor: colors.white,
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
   },
-  timelineDotDone: {
-    width: 20, height: 20, borderRadius: 10, backgroundColor: '#dbeafe',
-    alignItems: 'center', justifyContent: 'center',
+  sectionHeaderIcon: {
+    width: 35,
+    height: 35,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#eef2ff',
   },
-  timelineDotPending: {
-    width: 16, height: 16, borderRadius: 8, borderWidth: 2, borderColor: colors.outlineVariant,
-    borderStyle: 'dashed', backgroundColor: colors.white,
+  sectionHeaderTextContainer: {
+    flex: 1,
   },
-  timelineLine: { flex: 1, width: 2, backgroundColor: '#dbeafe', marginTop: 4, minHeight: 16 },
-  timelineLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  timelineLabel: { fontSize: 13, fontWeight: '600', color: colors.textPrimary },
-  timelineSub: { fontSize: 11, color: colors.primary, opacity: 0.8, marginTop: 2 },
-  timelineTime: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
-  liveTag: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: '#ccfbf1', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.textPrimary,
   },
-  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#14b8a6' },
-  liveTagText: { fontSize: 9, fontWeight: '700', color: '#0f766e', textTransform: 'uppercase' },
-
-  agentRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  agentAvatar: {
-    width: 44, height: 44, borderRadius: 22, backgroundColor: '#eef2ff',
-    alignItems: 'center', justifyContent: 'center',
-  },
-  agentAvatarText: { fontWeight: '700', color: colors.primary },
-  agentName: { fontSize: 14, fontWeight: '700', color: colors.primary },
-  agentMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 3, flexWrap: 'wrap' },
-  agentMeta: { fontSize: 12, color: colors.textSecondary },
-  callBtn: {
-    width: 38, height: 38, borderRadius: 10, borderWidth: 1, borderColor: colors.outlineVariant,
-    alignItems: 'center', justifyContent: 'center',
+  sectionSubtitle: {
+    marginTop: 2,
+    fontSize: 11,
+    lineHeight: 16,
+    color: colors.textSecondary,
   },
 
-  trackingPlaceholder: {
-    backgroundColor: colors.surfaceLowest, borderRadius: 16, borderWidth: 1, borderColor: colors.outlineVariant,
-    alignItems: 'center', padding: 24, gap: 6,
+  timelineContainer: {
+    paddingTop: 2,
   },
-  trackingTitle: { fontSize: 14, fontWeight: '600', color: colors.textPrimary },
-  trackingSubtitle: { fontSize: 12, color: colors.textSecondary, textAlign: 'center' },
-
-  itemRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  itemName: { fontSize: 13, fontWeight: '500', color: colors.textPrimary },
-  itemPrice: { fontSize: 11, color: colors.textMuted, marginTop: 1 },
-  itemQty: { fontSize: 12, fontWeight: '600', color: colors.textSecondary },
-  divider: { height: 1, backgroundColor: colors.outlineVariant, marginVertical: 4 },
-  summaryLine: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  summaryLabel: { fontSize: 12, color: colors.textSecondary },
-  summaryValue: { fontSize: 12, color: colors.textSecondary },
-  totalLabel: { fontSize: 14, fontWeight: '600', color: colors.textPrimary },
-  totalValue: { fontSize: 17, fontWeight: '700', color: colors.primary },
-
-  chatHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  bubbleLeft: { alignSelf: 'flex-start', maxWidth: '85%', backgroundColor: colors.surface, borderRadius: 14, borderBottomLeftRadius: 4, padding: 10 },
-  bubbleLeftText: { fontSize: 13, color: colors.textPrimary },
-  bubbleRight: { alignSelf: 'flex-end', maxWidth: '85%', backgroundColor: colors.primary, borderRadius: 14, borderBottomRightRadius: 4, padding: 10 },
-  bubbleRightText: { fontSize: 13, color: colors.white },
-  chatEmpty: { alignItems: 'center', paddingVertical: 20, gap: 8 },
-  chatEmptyText: { fontSize: 12, color: colors.textMuted, textAlign: 'center' },
-  chatInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
-  chatInput: {
-    flex: 1, backgroundColor: colors.surface, borderRadius: 999, borderWidth: 1, borderColor: colors.outlineVariant,
-    paddingHorizontal: 14, paddingVertical: Platform.select({ ios: 10, android: 8, default: 10 }), fontSize: 13, color: colors.textPrimary,
+  timelineRow: {
+    flexDirection: 'row',
+    gap: 12,
   },
-  sendBtn: {
-    width: 36, height: 36, borderRadius: 18, backgroundColor: colors.primary,
-    alignItems: 'center', justifyContent: 'center',
+  timelineRail: {
+    width: 32,
+    alignItems: 'center',
+  },
+  timelineCircle: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.outlineVariant,
+    backgroundColor: colors.surface,
+  },
+  timelineCircleCompleted: {
+    borderColor: colors.success,
+    backgroundColor: colors.success,
+  },
+  timelineCircleCurrent: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary,
+  },
+  timelineLine: {
+    width: 2,
+    flex: 1,
+    minHeight: 30,
+    marginVertical: 4,
+    backgroundColor: colors.outlineVariant,
+  },
+  timelineLineCompleted: {
+    backgroundColor: colors.success,
+  },
+  timelineContent: {
+    flex: 1,
+    paddingTop: 3,
+  },
+  timelineContentSpacing: {
+    paddingBottom: 18,
+  },
+  timelineTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  timelineTitle: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  timelineTitleCurrent: {
+    color: colors.primary,
+  },
+  timelineTitleUpcoming: {
+    color: colors.textMuted,
+  },
+  timelineDescription: {
+    marginTop: 4,
+    fontSize: 11,
+    lineHeight: 16,
+    color: colors.textSecondary,
+  },
+  timelineDescriptionUpcoming: {
+    color: colors.textMuted,
+  },
+  timelineStateBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: colors.surface,
+  },
+  completedBadge: {
+    backgroundColor: colors.successBg,
+  },
+  currentBadge: {
+    backgroundColor: '#eef2ff',
+  },
+  timelineStateText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: colors.textMuted,
+  },
+  completedBadgeText: {
+    color: colors.success,
+  },
+  currentBadgeText: {
+    color: colors.primary,
+  },
+
+  trackingCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#a5f3fc',
+    borderRadius: 18,
+    backgroundColor: '#ecfeff',
+  },
+  trackingIconContainer: {
+    width: 46,
+    height: 46,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.white,
+  },
+  trackingContent: {
+    flex: 1,
+  },
+  trackingTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.primary,
+  },
+  trackingDescription: {
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 18,
+    color: colors.textSecondary,
+  },
+
+  itemsList: {
+    gap: 0,
+  },
+  itemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    paddingVertical: 11,
+  },
+  itemRowBorder: {
+    borderTopWidth: 1,
+    borderTopColor: colors.outlineVariant,
+  },
+  itemIconContainer: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#eef2ff',
+  },
+  itemInformation: {
+    flex: 1,
+  },
+  itemName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  itemCalculation: {
+    marginTop: 3,
+    fontSize: 11,
+    color: colors.textSecondary,
+  },
+  itemTotal: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: colors.primary,
+  },
+  priceDivider: {
+    height: 1,
+    backgroundColor: colors.outlineVariant,
+  },
+  priceLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  priceLineLabel: {
+    fontSize: 12,
+    color: colors.textSecondary,
+  },
+  priceLineValue: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  totalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.outlineVariant,
+  },
+  totalLabel: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+  totalValue: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: colors.primary,
+  },
+
+  informationRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 11,
+  },
+  informationIconContainer: {
+    width: 34,
+    height: 34,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+  },
+  informationTextContainer: {
+    flex: 1,
+  },
+  informationLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    color: colors.textMuted,
+  },
+  informationValue: {
+    marginTop: 3,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+
+  prescriptionStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    borderRadius: 12,
+  },
+  prescriptionStatusText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  prescriptionVerifiedAt: {
+    fontSize: 11,
+    color: colors.textSecondary,
+  },
+  rejectionReasonContainer: {
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    backgroundColor: '#fff7f7',
+  },
+  rejectionReasonLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    color: colors.error,
+  },
+  rejectionReasonText: {
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 18,
+    color: colors.errorText,
+  },
+
+  problemCard: {
+    borderColor: '#fecaca',
+  },
+  problemCardText: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.textSecondary,
+  },
+
+  notesContainer: {
+    padding: 13,
+    borderRadius: 12,
+    backgroundColor: colors.surface,
+  },
+  notesText: {
+    fontSize: 13,
+    lineHeight: 20,
+    color: colors.textPrimary,
+  },
+
+  futureFeatureRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 11,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: colors.surface,
+  },
+  futureFeatureIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#eef2ff',
+  },
+  futureFeatureTextContainer: {
+    flex: 1,
+  },
+  futureFeatureTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+  futureFeatureText: {
+    marginTop: 3,
+    fontSize: 11,
+    lineHeight: 17,
+    color: colors.textSecondary,
+  },
+
+  actionsCard: {
+    gap: 10,
+    padding: 16,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.outlineVariant,
+    backgroundColor: colors.surfaceLowest,
+  },
+  actionsTitle: {
+    marginBottom: 2,
+    fontSize: 13,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+  primaryAction: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 9,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 13,
+    backgroundColor: colors.primary,
+  },
+  primaryActionText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.white,
+  },
+  cancelAction: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 9,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: 13,
+    backgroundColor: colors.errorBg,
+  },
+  cancelActionText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.error,
+  },
+  buttonPressed: {
+    opacity: 0.82,
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
 })

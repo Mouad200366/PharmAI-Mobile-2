@@ -5,6 +5,7 @@ import {
 } from 'react'
 import {
   ActivityIndicator,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,6 +13,7 @@ import {
   TextInput,
   View,
 } from 'react-native'
+import * as ImagePicker from 'expo-image-picker'
 import {
   useFocusEffect,
 } from '@react-navigation/native'
@@ -26,6 +28,7 @@ import {
   ordersApi,
   type PaymentMethod,
   type PrescriptionMode,
+  type PrescriptionPhotoUpload,
 } from '../../api/orders'
 import {
   addressesApi,
@@ -49,6 +52,7 @@ type Props =
   >
 
 const DELIVERY_FEE = 15
+const MAX_PRESCRIPTION_FILE_SIZE = 10 * 1024 * 1024
 
 const PRESCRIPTION_OPTIONS: {
   value: PrescriptionMode
@@ -98,6 +102,64 @@ function formatPrice(
     .replace('.', ',')} MAD`
 }
 
+function getFileExtension(
+  uri: string,
+) {
+  const cleanUri = uri.split('?')[0]
+  const extension = cleanUri
+    .split('.')
+    .pop()
+    ?.toLowerCase()
+
+  if (
+    extension === 'png' ||
+    extension === 'webp' ||
+    extension === 'heic' ||
+    extension === 'heif'
+  ) {
+    return extension
+  }
+
+  return 'jpg'
+}
+
+function getMimeType(
+  extension: string,
+) {
+  if (extension === 'png') {
+    return 'image/png'
+  }
+
+  if (extension === 'webp') {
+    return 'image/webp'
+  }
+
+  if (
+    extension === 'heic' ||
+    extension === 'heif'
+  ) {
+    return `image/${extension}`
+  }
+
+  return 'image/jpeg'
+}
+
+function createPrescriptionPhoto(
+  asset: ImagePicker.ImagePickerAsset,
+): PrescriptionPhotoUpload {
+  const extension = getFileExtension(asset.uri)
+
+  return {
+    uri: asset.uri,
+    name:
+      asset.fileName ||
+      `ordonnance-${Date.now()}.${extension}`,
+    type:
+      asset.mimeType ||
+      getMimeType(extension),
+  }
+}
+
 export default function Checkout({
   navigation,
 }: Props) {
@@ -136,6 +198,17 @@ export default function Checkout({
     setPrescriptionMode,
   ] =
     useState<PrescriptionMode>('none')
+
+  const [
+    prescriptionPhoto,
+    setPrescriptionPhoto,
+  ] =
+    useState<PrescriptionPhotoUpload | null>(null)
+
+  const [
+    imagePicking,
+    setImagePicking,
+  ] = useState(false)
 
   const [
     paymentMethod,
@@ -248,16 +321,28 @@ export default function Checkout({
     submitting,
   ])
 
-  if (items.length === 0) {
-    return null
-  }
-
   const hasPrescriptionItem =
     items.some(
       (item) =>
         item.medicine
           .requires_prescription,
     )
+
+  useEffect(() => {
+    if (
+      hasPrescriptionItem &&
+      prescriptionMode === 'none'
+    ) {
+      setPrescriptionMode('photo')
+    }
+  }, [
+    hasPrescriptionItem,
+    prescriptionMode,
+  ])
+
+  if (items.length === 0) {
+    return null
+  }
 
   const hasInvalidPricing =
     items.some((item) => {
@@ -295,6 +380,134 @@ export default function Checkout({
   const estimatedTotal =
     estimatedSubtotal +
     DELIVERY_FEE
+
+  function acceptPickedPhoto(
+    asset: ImagePicker.ImagePickerAsset,
+  ) {
+    if (
+      asset.fileSize !== undefined &&
+      asset.fileSize >
+        MAX_PRESCRIPTION_FILE_SIZE
+    ) {
+      setError(
+        "L'image est trop volumineuse. Choisissez une image de moins de 10 Mo.",
+      )
+      return
+    }
+
+    setPrescriptionPhoto(
+      createPrescriptionPhoto(asset),
+    )
+    setPrescriptionMode('photo')
+    setError('')
+  }
+
+  async function takePrescriptionPhoto() {
+    if (imagePicking || submitting) {
+      return
+    }
+
+    setError('')
+    setImagePicking(true)
+
+    try {
+      const permission =
+        await ImagePicker.requestCameraPermissionsAsync()
+
+      if (!permission.granted) {
+        setError(
+          "L'accès à la caméra est nécessaire pour photographier l'ordonnance. Autorisez-le dans les réglages du téléphone.",
+        )
+        return
+      }
+
+      const result =
+        await ImagePicker.launchCameraAsync({
+          mediaTypes: ['images'],
+          cameraType:
+            ImagePicker.CameraType.back,
+          allowsEditing: false,
+          quality: 0.8,
+        })
+
+      if (
+        !result.canceled &&
+        result.assets[0]
+      ) {
+        acceptPickedPhoto(
+          result.assets[0],
+        )
+      }
+    } catch {
+      setError(
+        "Impossible d'ouvrir la caméra. Veuillez réessayer.",
+      )
+    } finally {
+      setImagePicking(false)
+    }
+  }
+
+  async function choosePrescriptionPhoto() {
+    if (imagePicking || submitting) {
+      return
+    }
+
+    setError('')
+    setImagePicking(true)
+
+    try {
+      const permission =
+        await ImagePicker.requestMediaLibraryPermissionsAsync()
+
+      if (!permission.granted) {
+        setError(
+          "L'accès aux photos est nécessaire pour sélectionner l'ordonnance. Autorisez-le dans les réglages du téléphone.",
+        )
+        return
+      }
+
+      const result =
+        await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ['images'],
+          allowsEditing: false,
+          quality: 0.8,
+          selectionLimit: 1,
+        })
+
+      if (
+        !result.canceled &&
+        result.assets[0]
+      ) {
+        acceptPickedPhoto(
+          result.assets[0],
+        )
+      }
+    } catch {
+      setError(
+        "Impossible d'ouvrir la galerie. Veuillez réessayer.",
+      )
+    } finally {
+      setImagePicking(false)
+    }
+  }
+
+  function selectPrescriptionMode(
+    nextMode: PrescriptionMode,
+  ) {
+    if (
+      hasPrescriptionItem &&
+      nextMode === 'none'
+    ) {
+      return
+    }
+
+    setError('')
+    setPrescriptionMode(nextMode)
+
+    if (nextMode !== 'photo') {
+      setPrescriptionPhoto(null)
+    }
+  }
 
   async function handleSubmit() {
     setError('')
@@ -355,6 +568,23 @@ export default function Checkout({
       return
     }
 
+    if (
+      prescriptionMode === 'photo' &&
+      !prescriptionPhoto
+    ) {
+      setError(
+        "Ajoutez une photo lisible de l'ordonnance ou choisissez la remise à la livraison.",
+      )
+      return
+    }
+
+    if (paymentMethod === 'card') {
+      setError(
+        'Le paiement par carte sera disponible prochainement. Choisissez le paiement en espèces.',
+      )
+      return
+    }
+
     const deliveryAddress =
       `${selectedAddress.street}, ${selectedAddress.city}`
 
@@ -384,6 +614,11 @@ export default function Checkout({
 
           payment_method:
             paymentMethod,
+
+          prescription_photo:
+            prescriptionMode === 'photo'
+              ? prescriptionPhoto
+              : null,
 
           notes:
             notes.trim() ||
@@ -936,7 +1171,7 @@ export default function Checkout({
           </Text>
         </View>
 
-        {hasPrescriptionItem && (
+        {hasPrescriptionItem ? (
           <View
             style={styles.warningBox}
           >
@@ -949,10 +1184,21 @@ export default function Checkout({
             <Text
               style={styles.warningText}
             >
-              Certains médicaments
-              nécessitent une ordonnance.
+              Certains médicaments de
+              votre panier nécessitent
+              obligatoirement une
+              ordonnance.
             </Text>
           </View>
+        ) : (
+          <Text
+            style={styles.sectionHelp}
+          >
+            Ajoutez une ordonnance si
+            elle est utile à la
+            préparation de votre
+            commande.
+          </Text>
         )}
 
         <View
@@ -964,21 +1210,36 @@ export default function Checkout({
                 prescriptionMode ===
                 option.value
 
+              const disabled =
+                hasPrescriptionItem &&
+                option.value === 'none'
+
               return (
                 <Pressable
                   key={option.value}
-                  style={[
+                  style={({ pressed }) => [
                     styles.segmentButton,
 
                     active &&
                       styles.segmentButtonActive,
-                  ]}
-                  onPress={() => {
-                    setError('')
 
-                    setPrescriptionMode(
+                    disabled &&
+                      styles.segmentButtonDisabled,
+
+                    pressed &&
+                      !disabled &&
+                      styles.pressed,
+                  ]}
+                  onPress={() =>
+                    selectPrescriptionMode(
                       option.value,
                     )
+                  }
+                  disabled={disabled}
+                  accessibilityRole="button"
+                  accessibilityState={{
+                    selected: active,
+                    disabled,
                   }}
                 >
                   <Text
@@ -987,6 +1248,9 @@ export default function Checkout({
 
                       active &&
                         styles.segmentTextActive,
+
+                      disabled &&
+                        styles.segmentTextDisabled,
                     ]}
                   >
                     {option.label}
@@ -1000,19 +1264,229 @@ export default function Checkout({
         {prescriptionMode ===
           'photo' && (
           <View
-            style={styles.uploadBox}
+            style={styles.photoSection}
+          >
+            {prescriptionPhoto ? (
+              <View
+                style={styles.photoPreviewCard}
+              >
+                <Image
+                  source={{
+                    uri:
+                      prescriptionPhoto.uri,
+                  }}
+                  style={styles.photoPreview}
+                  resizeMode="cover"
+                />
+
+                <View
+                  style={styles.photoInformation}
+                >
+                  <View
+                    style={styles.photoStatusRow}
+                  >
+                    <Icon
+                      name="check_circle"
+                      size={18}
+                      color={colors.success}
+                    />
+
+                    <Text
+                      style={styles.photoStatusText}
+                    >
+                      Ordonnance ajoutée
+                    </Text>
+                  </View>
+
+                  <Text
+                    style={styles.photoFileName}
+                    numberOfLines={1}
+                  >
+                    {prescriptionPhoto.name}
+                  </Text>
+
+                  <View
+                    style={styles.photoActions}
+                  >
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.photoReplaceButton,
+                        pressed && styles.pressed,
+                      ]}
+                      onPress={choosePrescriptionPhoto}
+                      disabled={
+                        imagePicking ||
+                        submitting
+                      }
+                    >
+                      <Icon
+                        name="image"
+                        size={16}
+                        color={colors.primary}
+                      />
+
+                      <Text
+                        style={styles.photoReplaceText}
+                      >
+                        Remplacer
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.photoRemoveButton,
+                        pressed && styles.pressed,
+                      ]}
+                      onPress={() => {
+                        setPrescriptionPhoto(null)
+                        setError('')
+                      }}
+                      disabled={submitting}
+                    >
+                      <Icon
+                        name="delete_outline"
+                        size={16}
+                        color={colors.errorText}
+                      />
+
+                      <Text
+                        style={styles.photoRemoveText}
+                      >
+                        Supprimer
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+              </View>
+            ) : (
+              <View
+                style={styles.uploadBox}
+              >
+                <View
+                  style={styles.uploadIconCircle}
+                >
+                  <Icon
+                    name="description"
+                    size={25}
+                    color={colors.primary}
+                  />
+                </View>
+
+                <Text
+                  style={styles.uploadTitle}
+                >
+                  Ajouter votre ordonnance
+                </Text>
+
+                <Text
+                  style={styles.uploadText}
+                >
+                  Assurez-vous que le nom,
+                  les médicaments et la
+                  signature sont lisibles.
+                </Text>
+
+                <View
+                  style={styles.imageActionRow}
+                >
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.imageActionButton,
+                      styles.imageActionPrimary,
+                      pressed && styles.pressed,
+                    ]}
+                    onPress={takePrescriptionPhoto}
+                    disabled={
+                      imagePicking ||
+                      submitting
+                    }
+                  >
+                    <Icon
+                      name="photo_camera"
+                      size={19}
+                      color={colors.white}
+                    />
+
+                    <Text
+                      style={styles.imageActionPrimaryText}
+                    >
+                      Prendre une photo
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.imageActionButton,
+                      styles.imageActionSecondary,
+                      pressed && styles.pressed,
+                    ]}
+                    onPress={choosePrescriptionPhoto}
+                    disabled={
+                      imagePicking ||
+                      submitting
+                    }
+                  >
+                    <Icon
+                      name="photo_library"
+                      size={19}
+                      color={colors.primary}
+                    />
+
+                    <Text
+                      style={styles.imageActionSecondaryText}
+                    >
+                      Galerie
+                    </Text>
+                  </Pressable>
+                </View>
+
+                {imagePicking && (
+                  <View
+                    style={styles.pickerLoading}
+                  >
+                    <ActivityIndicator
+                      size="small"
+                      color={colors.primary}
+                    />
+
+                    <Text
+                      style={styles.pickerLoadingText}
+                    >
+                      Ouverture…
+                    </Text>
+                  </View>
+                )}
+
+                <Text
+                  style={styles.fileRequirements}
+                >
+                  Image JPG, PNG, WEBP ou
+                  HEIC · maximum 10 Mo
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
+
+        {prescriptionMode ===
+          'pickup' && (
+          <View
+            style={styles.infoBox}
           >
             <Icon
-              name="upload"
-              size={18}
-              color={colors.primary}
+              name="info"
+              size={17}
+              color="#1d4ed8"
             />
 
             <Text
-              style={styles.uploadText}
+              style={styles.infoText}
             >
-              Joindre une photo
-              (fonctionnalité à venir)
+              Vous devrez remettre
+              l’ordonnance originale au
+              moment de la livraison. La
+              pharmacie peut vérifier la
+              commande avant son envoi.
             </Text>
           </View>
         )}
@@ -1040,24 +1514,44 @@ export default function Checkout({
           <PayOption
             icon="payments"
             label="Espèces"
+            description="À la livraison"
             active={
               paymentMethod === 'cash'
             }
-            onPress={() =>
+            onPress={() => {
+              setError('')
               setPaymentMethod('cash')
-            }
+            }}
           />
 
           <PayOption
             icon="credit_card"
             label="Carte bancaire"
-            active={
-              paymentMethod === 'card'
-            }
-            onPress={() =>
-              setPaymentMethod('card')
-            }
+            description="Bientôt disponible"
+            active={false}
+            disabled
+            badge="Bientôt"
+            onPress={() => undefined}
           />
+        </View>
+
+        <View
+          style={styles.paymentNotice}
+        >
+          <Icon
+            name="lock"
+            size={15}
+            color={colors.textSecondary}
+          />
+
+          <Text
+            style={styles.paymentNoticeText}
+          >
+            Aucun paiement ne sera demandé
+            dans l’application pour le
+            moment. Vous paierez en espèces
+            à la livraison.
+          </Text>
         </View>
       </View>
 
@@ -1179,33 +1673,64 @@ export default function Checkout({
 type PayOptionProps = {
   icon: string
   label: string
+  description: string
   active: boolean
+  disabled?: boolean
+  badge?: string
   onPress: () => void
 }
 
 function PayOption({
   icon,
   label,
+  description,
   active,
+  disabled = false,
+  badge,
   onPress,
 }: PayOptionProps) {
   return (
     <Pressable
-      style={[
+      style={({ pressed }) => [
         styles.payOption,
 
         active &&
           styles.payOptionActive,
+
+        disabled &&
+          styles.payOptionDisabled,
+
+        pressed &&
+          !disabled &&
+          styles.pressed,
       ]}
       onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityState={{
+        selected: active,
+        disabled,
+      }}
     >
+      {!!badge && (
+        <View style={styles.payBadge}>
+          <Text
+            style={styles.payBadgeText}
+          >
+            {badge}
+          </Text>
+        </View>
+      )}
+
       <Icon
         name={icon}
         size={22}
         color={
-          active
-            ? colors.primary
-            : colors.textSecondary
+          disabled
+            ? colors.textMuted
+            : active
+              ? colors.primary
+              : colors.textSecondary
         }
       />
 
@@ -1215,9 +1740,23 @@ function PayOption({
 
           active &&
             styles.payLabelActive,
+
+          disabled &&
+            styles.payLabelDisabled,
         ]}
       >
         {label}
+      </Text>
+
+      <Text
+        style={[
+          styles.payDescription,
+
+          disabled &&
+            styles.payDescriptionDisabled,
+        ]}
+      >
+        {description}
       </Text>
     </Pressable>
   )
@@ -1600,6 +2139,30 @@ const styles =
       fontSize: 12,
     },
 
+    sectionHelp: {
+      color: colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 18,
+    },
+
+    infoBox: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 8,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: '#bfdbfe',
+      borderRadius: 12,
+      backgroundColor: '#eff6ff',
+    },
+
+    infoText: {
+      flex: 1,
+      color: '#1d4ed8',
+      fontSize: 11,
+      lineHeight: 17,
+    },
+
     segmentRow: {
       flexDirection: 'row',
       gap: 8,
@@ -1622,6 +2185,12 @@ const styles =
         colors.primary,
     },
 
+    segmentButtonDisabled: {
+      borderColor: '#e5e7eb',
+      backgroundColor: '#f3f4f6',
+      opacity: 0.65,
+    },
+
     segmentText: {
       color:
         colors.textSecondary,
@@ -1633,22 +2202,187 @@ const styles =
       color: colors.white,
     },
 
+    segmentTextDisabled: {
+      color: colors.textMuted,
+    },
+
+    photoSection: {
+      gap: 10,
+    },
+
     uploadBox: {
-      flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
-      padding: 12,
+      gap: 10,
+      padding: 16,
       borderWidth: 2,
       borderColor: '#bfdbfe',
       borderStyle: 'dashed',
-      borderRadius: 12,
+      borderRadius: 14,
+      backgroundColor: '#f8fbff',
+    },
+
+    uploadIconCircle: {
+      width: 50,
+      height: 50,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 25,
+      backgroundColor: '#dbeafe',
+    },
+
+    uploadTitle: {
+      color: colors.textPrimary,
+      fontSize: 14,
+      fontWeight: '800',
+      textAlign: 'center',
     },
 
     uploadText: {
+      maxWidth: 290,
+      color: colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 17,
+      textAlign: 'center',
+    },
+
+    imageActionRow: {
+      width: '100%',
+      flexDirection: 'row',
+      gap: 10,
+      marginTop: 2,
+    },
+
+    imageActionButton: {
+      minHeight: 44,
       flex: 1,
-      color:
-        colors.textSecondary,
-      fontSize: 13,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 7,
+      paddingHorizontal: 10,
+      borderRadius: 12,
+    },
+
+    imageActionPrimary: {
+      backgroundColor: colors.primary,
+    },
+
+    imageActionSecondary: {
+      borderWidth: 1,
+      borderColor: colors.primary,
+      backgroundColor: colors.surfaceLowest,
+    },
+
+    imageActionPrimaryText: {
+      color: colors.white,
+      fontSize: 11,
+      fontWeight: '700',
+    },
+
+    imageActionSecondaryText: {
+      color: colors.primary,
+      fontSize: 11,
+      fontWeight: '700',
+    },
+
+    pickerLoading: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+    },
+
+    pickerLoadingText: {
+      color: colors.textSecondary,
+      fontSize: 11,
+    },
+
+    fileRequirements: {
+      color: colors.textMuted,
+      fontSize: 10,
+      textAlign: 'center',
+    },
+
+    photoPreviewCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      padding: 11,
+      borderWidth: 1,
+      borderColor: '#bbf7d0',
+      borderRadius: 14,
+      backgroundColor: colors.successBg,
+    },
+
+    photoPreview: {
+      width: 76,
+      height: 92,
+      borderRadius: 10,
+      backgroundColor: colors.outlineVariant,
+    },
+
+    photoInformation: {
+      flex: 1,
+      minWidth: 0,
+      gap: 6,
+    },
+
+    photoStatusRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+
+    photoStatusText: {
+      color: '#15803d',
+      fontSize: 12,
+      fontWeight: '800',
+    },
+
+    photoFileName: {
+      color: colors.textSecondary,
+      fontSize: 10,
+    },
+
+    photoActions: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+
+    photoReplaceButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 9,
+      paddingVertical: 7,
+      borderWidth: 1,
+      borderColor: colors.primary,
+      borderRadius: 9,
+      backgroundColor: colors.surfaceLowest,
+    },
+
+    photoReplaceText: {
+      color: colors.primary,
+      fontSize: 10,
+      fontWeight: '700',
+    },
+
+    photoRemoveButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 9,
+      paddingVertical: 7,
+      borderWidth: 1,
+      borderColor: '#fecaca',
+      borderRadius: 9,
+      backgroundColor: colors.surfaceLowest,
+    },
+
+    photoRemoveText: {
+      color: colors.errorText,
+      fontSize: 10,
+      fontWeight: '700',
     },
 
     payRow: {
@@ -1673,6 +2407,28 @@ const styles =
       backgroundColor: '#eff6ff',
     },
 
+    payOptionDisabled: {
+      borderColor: '#e5e7eb',
+      backgroundColor: '#f9fafb',
+      opacity: 0.8,
+    },
+
+    payBadge: {
+      position: 'absolute',
+      top: 7,
+      right: 7,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 999,
+      backgroundColor: '#fef3c7',
+    },
+
+    payBadgeText: {
+      color: '#92400e',
+      fontSize: 8,
+      fontWeight: '800',
+    },
+
     payLabel: {
       color:
         colors.textSecondary,
@@ -1682,6 +2438,38 @@ const styles =
 
     payLabelActive: {
       color: colors.primary,
+    },
+
+    payLabelDisabled: {
+      color: colors.textMuted,
+    },
+
+    payDescription: {
+      color: colors.textMuted,
+      fontSize: 10,
+      textAlign: 'center',
+    },
+
+    payDescriptionDisabled: {
+      color: colors.textMuted,
+    },
+
+    paymentNotice: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 7,
+      paddingTop: 3,
+    },
+
+    paymentNoticeText: {
+      flex: 1,
+      color: colors.textSecondary,
+      fontSize: 10,
+      lineHeight: 15,
+    },
+
+    pressed: {
+      opacity: 0.78,
     },
 
     errorBox: {

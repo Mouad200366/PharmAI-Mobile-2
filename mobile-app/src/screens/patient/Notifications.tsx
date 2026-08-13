@@ -1,439 +1,1546 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import {
-  View, Text, StyleSheet, Pressable, FlatList, TextInput,
-  ActivityIndicator, Modal, ScrollView,
+  ActivityIndicator,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  SectionList,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native'
+import type { CompositeScreenProps } from '@react-navigation/native'
 import { useFocusEffect } from '@react-navigation/native'
-import { notificationsApi, type Notification } from '../../api/notifications'
+import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs'
+import type { NativeStackScreenProps } from '@react-navigation/native-stack'
+
+import {
+  getNotificationOrderId,
+  notificationsApi,
+  type Notification,
+  type NotificationType,
+} from '../../api/notifications'
+import { firstError } from '../../api/errors'
 import Icon from '../../components/ui/Icon'
+import type {
+  AppTabParamList,
+  MainStackParamList,
+} from '../../navigation/types'
 import { colors } from '../../theme/colors'
 
-type NType = 'delivery' | 'order' | 'prescription' | 'pharmacy' | 'system'
+type Props = CompositeScreenProps<
+  BottomTabScreenProps<AppTabParamList, 'Notifications'>,
+  NativeStackScreenProps<MainStackParamList>
+>
 
-function inferType(title: string, body: string): NType {
-  const text = `${title} ${body}`.toLowerCase()
-  if (text.includes('livreur') || text.includes('livraison') || text.includes('route') || text.includes('transit')) return 'delivery'
-  if (text.includes('ordonnance') || text.includes('prescription')) return 'prescription'
-  if (text.includes('commande')) return 'order'
-  if (text.includes('pharmacie') || text.includes('garde')) return 'pharmacy'
-  return 'system'
+type FilterKey =
+  | 'all'
+  | 'unread'
+  | 'orders'
+  | 'prescriptions'
+  | 'payments'
+  | 'delivery'
+
+type NotificationSection = {
+  title: string
+  data: Notification[]
 }
 
-const TYPE_META: Record<NType, { icon: string; bg: string; color: string; label: string }> = {
-  delivery: { icon: 'two_wheeler', bg: '#E0F2FE', color: '#006172', label: 'Mise à jour de livraison' },
-  order: { icon: 'local_mall', bg: '#f3f4f6', color: '#4b5563', label: 'Commande' },
-  prescription: { icon: 'fact_check', bg: '#f2f3ff', color: colors.primary, label: 'Ordonnance' },
-  pharmacy: { icon: 'nightlight', bg: '#ede9fe', color: '#6d28d9', label: 'Pharmacie de garde' },
-  system: { icon: 'notifications', bg: '#f3f4f6', color: '#6b7280', label: 'Système' },
-}
-
-function formatTime(dateStr: string): string {
-  const date = new Date(dateStr)
-  const now = new Date()
-  const diffMin = Math.floor((now.getTime() - date.getTime()) / 60000)
-  if (diffMin < 60) return `Il y a ${diffMin} min`
-  if (diffMin < 1440) return date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
-  if (diffMin < 2880) return `Hier, ${date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
-  return date.toLocaleDateString('fr-MA', { day: 'numeric', month: 'short' })
-}
-
-function sameDay(a: Date, b: Date) {
-  return a.toDateString() === b.toDateString()
-}
-
-function groupByDate(notifs: Notification[]): { label: string; items: Notification[] }[] {
-  const today = new Date()
-  const yesterday = new Date(); yesterday.setDate(today.getDate() - 1)
-  const todayItems = notifs.filter((n) => sameDay(new Date(n.created_at), today))
-  const yesterdayItems = notifs.filter((n) => sameDay(new Date(n.created_at), yesterday))
-  const olderItems = notifs.filter((n) => !sameDay(new Date(n.created_at), today) && !sameDay(new Date(n.created_at), yesterday))
-  return [
-    ...(todayItems.length ? [{ label: "Aujourd'hui", items: todayItems }] : []),
-    ...(yesterdayItems.length ? [{ label: 'Hier', items: yesterdayItems }] : []),
-    ...(olderItems.length ? [{ label: 'Plus ancien', items: olderItems }] : []),
-  ]
-}
-
-type FilterFn = (n: Notification) => boolean
-const FILTER_TABS: { key: string; label: string; fn: FilterFn }[] = [
-  { key: 'all', label: 'Toutes', fn: () => true },
-  { key: 'unread', label: 'Non lues', fn: (n) => !n.is_read },
-  { key: 'orders', label: 'Commandes', fn: (n) => inferType(n.title, n.body) === 'order' },
-  { key: 'delivery', label: 'Livraisons', fn: (n) => inferType(n.title, n.body) === 'delivery' },
-  { key: 'system', label: 'Système', fn: (n) => inferType(n.title, n.body) === 'system' },
+const ORDER_TYPES: NotificationType[] = [
+  'order_placed',
+  'order_status_changed',
+  'order_delivered',
+  'order_cancelled',
 ]
 
-// Mobile port of the web app's Notifications.tsx. Same data (filter tabs,
-// date-grouped list, search, mark-all-read, alert preferences) with one
-// layout change: desktop shows a persistent list+detail split view; there's
-// no room for a side panel on a phone, so tapping a card opens the detail
-// in a bottom-sheet-style Modal instead, and closes back to the list.
-// Preferences (which used to sit in the desktop's right column) become a
-// collapsible card under the list here since there's no free real estate.
-export default function Notifications() {
-  const [notifications, setNotifications] = useState<Notification[]>([])
-  const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState('unread')
-  const [search, setSearch] = useState('')
-  const [selected, setSelected] = useState<Notification | null>(null)
-  const [prefsOpen, setPrefsOpen] = useState(false)
-  const [prefs, setPrefs] = useState({ orders: true, delivery: true, prescription: true, pharmacy: false })
+const PRESCRIPTION_TYPES: NotificationType[] = [
+  'prescription_approved',
+  'prescription_rejected',
+]
 
-  const load = useCallback(async () => {
-    const r = await notificationsApi.list()
-    setNotifications(r.data.results)
-  }, [])
+const PAYMENT_TYPES: NotificationType[] = [
+  'payment_succeeded',
+  'payment_failed',
+]
+
+const DELIVERY_STATUSES = new Set([
+  'ready_for_pickup',
+  'awaiting_agent',
+  'picked_up',
+  'out_for_delivery',
+  'delivered',
+])
+
+const FILTERS: {
+  key: FilterKey
+  label: string
+  icon: string
+}[] = [
+  { key: 'all', label: 'Toutes', icon: 'notifications' },
+  { key: 'unread', label: 'Non lues', icon: 'mark_email_unread' },
+  { key: 'orders', label: 'Commandes', icon: 'local_mall' },
+  { key: 'prescriptions', label: 'Ordonnances', icon: 'description' },
+  { key: 'payments', label: 'Paiements', icon: 'payments' },
+  { key: 'delivery', label: 'Livraison', icon: 'two_wheeler' },
+]
+
+function isValidDate(date: Date) {
+  return !Number.isNaN(date.getTime())
+}
+
+function sameCalendarDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth()
+    && a.getDate() === b.getDate()
+  )
+}
+
+function sectionLabel(dateString: string) {
+  const date = new Date(dateString)
+
+  if (!isValidDate(date)) {
+    return 'Date inconnue'
+  }
+
+  const today = new Date()
+  const yesterday = new Date(today)
+  yesterday.setDate(today.getDate() - 1)
+
+  if (sameCalendarDay(date, today)) {
+    return "Aujourd'hui"
+  }
+
+  if (sameCalendarDay(date, yesterday)) {
+    return 'Hier'
+  }
+
+  return date.toLocaleDateString('fr-MA', {
+    day: 'numeric',
+    month: 'long',
+    year: date.getFullYear() !== today.getFullYear()
+      ? 'numeric'
+      : undefined,
+  })
+}
+
+function formatNotificationTime(dateString: string) {
+  const date = new Date(dateString)
+
+  if (!isValidDate(date)) {
+    return ''
+  }
+
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffMinutes = Math.max(0, Math.floor(diffMs / 60_000))
+
+  if (diffMinutes < 1) {
+    return "À l'instant"
+  }
+
+  if (diffMinutes < 60) {
+    return `Il y a ${diffMinutes} min`
+  }
+
+  if (sameCalendarDay(date, now)) {
+    return date.toLocaleTimeString('fr-FR', {
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  }
+
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+
+  if (sameCalendarDay(date, yesterday)) {
+    return `Hier, ${date.toLocaleTimeString('fr-FR', {
+      hour: '2-digit',
+      minute: '2-digit',
+    })}`
+  }
+
+  return date.toLocaleDateString('fr-MA', {
+    day: 'numeric',
+    month: 'short',
+  })
+}
+
+function matchesFilter(notification: Notification, filter: FilterKey) {
+  if (filter === 'all') {
+    return true
+  }
+
+  if (filter === 'unread') {
+    return !notification.is_read
+  }
+
+  if (filter === 'orders') {
+    return ORDER_TYPES.includes(notification.type)
+  }
+
+  if (filter === 'prescriptions') {
+    return PRESCRIPTION_TYPES.includes(notification.type)
+  }
+
+  if (filter === 'payments') {
+    return PAYMENT_TYPES.includes(notification.type)
+  }
+
+  if (filter === 'delivery') {
+    return (
+      notification.type === 'agent_assigned'
+      || notification.type === 'order_delivered'
+      || (
+        notification.type === 'order_status_changed'
+        && typeof notification.payload?.status === 'string'
+        && DELIVERY_STATUSES.has(notification.payload.status)
+      )
+    )
+  }
+
+  return true
+}
+
+function getNotificationPresentation(notification: Notification) {
+  const orderId = getNotificationOrderId(notification)
+  const orderSuffix = orderId ? ` #${orderId}` : ''
+  const status = typeof notification.payload?.status === 'string'
+    ? notification.payload.status
+    : null
+
+  if (notification.type === 'order_placed') {
+    return {
+      icon: 'receipt_long',
+      color: colors.primary,
+      background: '#e8eefc',
+      category: 'Commande',
+      title: `Commande${orderSuffix} reçue`,
+      body: 'Votre commande a bien été enregistrée.',
+    }
+  }
+
+  if (notification.type === 'order_status_changed') {
+    const statusPresentation: Record<
+      string,
+      {
+        title: string
+        body: string
+        icon: string
+        color: string
+        background: string
+      }
+    > = {
+      accepted: {
+        title: `Commande${orderSuffix} acceptée`,
+        body: 'La pharmacie a accepté votre commande.',
+        icon: 'check_circle',
+        color: '#047857',
+        background: '#ecfdf5',
+      },
+      preparing: {
+        title: `Commande${orderSuffix} en préparation`,
+        body: 'La pharmacie prépare actuellement vos médicaments.',
+        icon: 'inventory_2',
+        color: '#b45309',
+        background: '#fffbeb',
+      },
+      ready_for_pickup: {
+        title: `Commande${orderSuffix} prête`,
+        body: 'Votre commande est prête à être prise en charge pour la livraison.',
+        icon: 'shopping_bag',
+        color: '#0369a1',
+        background: '#eff6ff',
+      },
+      awaiting_agent: {
+        title: `Recherche d'un livreur`,
+        body: `Nous recherchons un livreur pour la commande${orderSuffix}.`,
+        icon: 'person_search',
+        color: '#0369a1',
+        background: '#eff6ff',
+      },
+      picked_up: {
+        title: `Commande${orderSuffix} récupérée`,
+        body: 'Le livreur a récupéré votre commande à la pharmacie.',
+        icon: 'two_wheeler',
+        color: '#0e7490',
+        background: '#ecfeff',
+      },
+      out_for_delivery: {
+        title: `Commande${orderSuffix} en livraison`,
+        body: 'Votre commande est en route vers votre adresse.',
+        icon: 'two_wheeler',
+        color: '#0e7490',
+        background: '#ecfeff',
+      },
+      rejected: {
+        title: `Commande${orderSuffix} refusée`,
+        body: notification.body || 'La commande ne peut pas être préparée.',
+        icon: 'cancel',
+        color: colors.error,
+        background: colors.errorBg,
+      },
+    }
+
+    const presentation = status ? statusPresentation[status] : undefined
+
+    if (presentation) {
+      return {
+        ...presentation,
+        category: DELIVERY_STATUSES.has(status ?? '')
+          ? 'Livraison'
+          : 'Commande',
+      }
+    }
+
+    return {
+      icon: 'update',
+      color: colors.primary,
+      background: '#e8eefc',
+      category: 'Commande',
+      title: notification.title || `Mise à jour de la commande${orderSuffix}`,
+      body: notification.body || 'Le statut de votre commande a été mis à jour.',
+    }
+  }
+
+  if (notification.type === 'order_delivered') {
+    return {
+      icon: 'task_alt',
+      color: '#047857',
+      background: '#ecfdf5',
+      category: 'Livraison',
+      title: `Commande${orderSuffix} livrée`,
+      body: 'Votre commande a été livrée.',
+    }
+  }
+
+  if (notification.type === 'order_cancelled') {
+    return {
+      icon: 'cancel',
+      color: colors.error,
+      background: colors.errorBg,
+      category: 'Commande',
+      title: `Commande${orderSuffix} annulée`,
+      body: notification.body || 'Votre commande a été annulée.',
+    }
+  }
+
+  if (notification.type === 'prescription_approved') {
+    return {
+      icon: 'fact_check',
+      color: '#047857',
+      background: '#ecfdf5',
+      category: 'Ordonnance',
+      title: 'Ordonnance validée',
+      body: `L'ordonnance de la commande${orderSuffix} a été approuvée.`,
+    }
+  }
+
+  if (notification.type === 'prescription_rejected') {
+    const rejectionBody = notification.body
+      && notification.body !== 'Your prescription could not be approved.'
+      ? notification.body
+      : "L'ordonnance n'a pas pu être validée."
+
+    return {
+      icon: 'report',
+      color: colors.error,
+      background: colors.errorBg,
+      category: 'Ordonnance',
+      title: 'Ordonnance refusée',
+      body: rejectionBody,
+    }
+  }
+
+  if (notification.type === 'payment_succeeded') {
+    const amount = typeof notification.payload?.amount === 'string'
+      ? notification.payload.amount
+      : null
+
+    return {
+      icon: 'payments',
+      color: '#047857',
+      background: '#ecfdf5',
+      category: 'Paiement',
+      title: 'Paiement confirmé',
+      body: amount
+        ? `Le paiement de ${amount} MAD pour la commande${orderSuffix} a été confirmé.`
+        : `Le paiement de la commande${orderSuffix} a été confirmé.`,
+    }
+  }
+
+  if (notification.type === 'payment_failed') {
+    return {
+      icon: 'credit_card_off',
+      color: colors.error,
+      background: colors.errorBg,
+      category: 'Paiement',
+      title: 'Paiement échoué',
+      body: `Le paiement de la commande${orderSuffix} n'a pas pu être traité.`,
+    }
+  }
+
+  if (notification.type === 'agent_assigned') {
+    return {
+      icon: 'two_wheeler',
+      color: '#0e7490',
+      background: '#ecfeff',
+      category: 'Livraison',
+      title: 'Livreur assigné',
+      body: `Un livreur a été assigné à la commande${orderSuffix}.`,
+    }
+  }
+
+  return {
+    icon: 'notifications',
+    color: colors.textSecondary,
+    background: '#f3f4f6',
+    category: 'Notification',
+    title: notification.title || 'Notification',
+    body: notification.body || '',
+  }
+}
+
+function groupNotifications(notifications: Notification[]) {
+  const sections = new Map<string, Notification[]>()
+
+  notifications.forEach((notification) => {
+    const label = sectionLabel(notification.created_at)
+    const current = sections.get(label) ?? []
+    current.push(notification)
+    sections.set(label, current)
+  })
+
+  return Array.from(sections.entries()).map(
+    ([title, data]): NotificationSection => ({
+      title,
+      data,
+    }),
+  )
+}
+
+export default function Notifications({ navigation }: Props) {
+  const [notifications, setNotifications] = useState<Notification[]>([])
+  const [totalCount, setTotalCount] = useState(0)
+  const [unreadCount, setUnreadCount] = useState(0)
+
+  const [filter, setFilter] = useState<FilterKey>('all')
+  const [search, setSearch] = useState('')
+
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+  const [markingAll, setMarkingAll] = useState(false)
+  const [openingId, setOpeningId] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const loadNotifications = useCallback(
+    async (showInitialLoader = false) => {
+      if (showInitialLoader) {
+        setLoading(true)
+      }
+
+      try {
+        const [listResponse, unreadResponse] = await Promise.all([
+          notificationsApi.list({ page_size: 100 }),
+          notificationsApi.unreadCount(),
+        ])
+
+        setNotifications(listResponse.data.results)
+        setTotalCount(listResponse.data.count)
+        setUnreadCount(unreadResponse.data.unread_count)
+        setError(null)
+      } catch (err) {
+        setError(firstError(err))
+      } finally {
+        if (showInitialLoader) {
+          setLoading(false)
+        }
+      }
+    },
+    [],
+  )
 
   useFocusEffect(
     useCallback(() => {
-      load().finally(() => setLoading(false))
-    }, [load]),
+      void loadNotifications(true)
+    }, [loadNotifications]),
   )
 
-  async function handleMarkAll() {
-    await notificationsApi.markAllRead()
-    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })))
+  const readCount = Math.max(0, totalCount - unreadCount)
+
+  const filteredNotifications = useMemo(() => {
+    const normalizedSearch = search.trim().toLocaleLowerCase('fr')
+
+    return notifications.filter((notification) => {
+      if (!matchesFilter(notification, filter)) {
+        return false
+      }
+
+      if (!normalizedSearch) {
+        return true
+      }
+
+      const presentation = getNotificationPresentation(notification)
+      const searchableText = [
+        presentation.title,
+        presentation.body,
+        presentation.category,
+        notification.title,
+        notification.body,
+        String(getNotificationOrderId(notification) ?? ''),
+      ]
+        .join(' ')
+        .toLocaleLowerCase('fr')
+
+      return searchableText.includes(normalizedSearch)
+    })
+  }, [filter, notifications, search])
+
+  const sections = useMemo(
+    () => groupNotifications(filteredNotifications),
+    [filteredNotifications],
+  )
+
+  const filterCount = useCallback(
+    (key: FilterKey) => {
+      if (key === 'all') {
+        return totalCount
+      }
+
+      if (key === 'unread') {
+        return unreadCount
+      }
+
+      return notifications.filter((notification) =>
+        matchesFilter(notification, key),
+      ).length
+    },
+    [notifications, totalCount, unreadCount],
+  )
+
+  async function handleRefresh() {
+    setRefreshing(true)
+    await loadNotifications(false)
+    setRefreshing(false)
   }
 
-  async function handleMarkOne(id: number) {
-    await notificationsApi.markRead(id)
-    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)))
+  async function handleMarkAllRead() {
+    if (unreadCount === 0 || markingAll) {
+      return
+    }
+
+    setMarkingAll(true)
+
+    try {
+      await notificationsApi.markAllRead()
+
+      const now = new Date().toISOString()
+
+      setNotifications((current) =>
+        current.map((notification) => ({
+          ...notification,
+          is_read: true,
+          read_at: notification.read_at ?? now,
+        })),
+      )
+      setUnreadCount(0)
+      setError(null)
+    } catch (err) {
+      setError(firstError(err))
+    } finally {
+      setMarkingAll(false)
+    }
   }
 
-  async function handleSelect(notif: Notification) {
-    setSelected(notif)
-    if (!notif.is_read) await handleMarkOne(notif.id)
+  async function markOneRead(notification: Notification) {
+    if (notification.is_read) {
+      return
+    }
+
+    const response = await notificationsApi.markRead(notification.id)
+
+    setNotifications((current) =>
+      current.map((item) =>
+        item.id === notification.id
+          ? response.data
+          : item,
+      ),
+    )
+    setUnreadCount((current) => Math.max(0, current - 1))
   }
 
-  const unreadCount = notifications.filter((n) => !n.is_read).length
-  const readCount = notifications.filter((n) => n.is_read).length
+  async function handleNotificationPress(notification: Notification) {
+    if (openingId !== null) {
+      return
+    }
 
-  const activeTab = FILTER_TABS.find((t) => t.key === filter) ?? FILTER_TABS[0]
-  const filtered = notifications
-    .filter(activeTab.fn)
-    .filter((n) => !search || n.title.toLowerCase().includes(search.toLowerCase()) || n.body.toLowerCase().includes(search.toLowerCase()))
-  const groups = groupByDate(filtered)
+    setOpeningId(notification.id)
 
-  if (loading) {
+    try {
+      await markOneRead(notification)
+      setError(null)
+
+      const orderId = getNotificationOrderId(notification)
+
+      if (orderId) {
+        navigation.navigate('OrderDetail', { id: orderId })
+      }
+    } catch (err) {
+      setError(firstError(err))
+    } finally {
+      setOpeningId(null)
+    }
+  }
+
+  if (loading && notifications.length === 0) {
     return (
       <View style={styles.centerScreen}>
         <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={styles.loadingText}>
+          Chargement de vos notifications…
+        </Text>
+      </View>
+    )
+  }
+
+  if (error && notifications.length === 0) {
+    return (
+      <View style={styles.centerScreen}>
+        <View style={styles.errorIcon}>
+          <Icon name="cloud_off" size={28} color={colors.error} />
+        </View>
+
+        <Text style={styles.errorTitle}>
+          Impossible de charger les notifications
+        </Text>
+
+        <Text style={styles.errorDescription}>
+          {error}
+        </Text>
+
+        <Pressable
+          style={styles.retryButton}
+          onPress={() => void loadNotifications(true)}
+        >
+          <Icon name="refresh" size={18} color={colors.white} />
+          <Text style={styles.retryButtonText}>Réessayer</Text>
+        </Pressable>
       </View>
     )
   }
 
   return (
-    <>
-      <FlatList
-        style={styles.screen}
-        contentContainerStyle={styles.content}
-        data={groups}
-        keyExtractor={(g) => g.label}
-        ListHeaderComponent={
-          <View style={{ gap: 14, marginBottom: 4 }}>
-            {/* Header */}
-            <View style={styles.headerRow}>
+    <SectionList
+      style={styles.screen}
+      contentContainerStyle={styles.content}
+      sections={sections}
+      keyExtractor={(item) => String(item.id)}
+      stickySectionHeadersEnabled={false}
+      keyboardShouldPersistTaps="handled"
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={() => void handleRefresh()}
+          tintColor={colors.primary}
+          colors={[colors.primary]}
+        />
+      }
+      ListHeaderComponent={
+        <View style={styles.headerContent}>
+          <View style={styles.headerRow}>
+            <View style={styles.headerText}>
               <Text style={styles.title}>Notifications</Text>
-              <Pressable style={styles.markAllBtn} onPress={handleMarkAll}>
-                <Icon name="done_all" size={16} color={colors.primary} />
-                <Text style={styles.markAllText}>Tout marquer comme lu</Text>
-              </Pressable>
+              <Text style={styles.subtitle}>
+                Suivez vos commandes, ordonnances et livraisons.
+              </Text>
             </View>
 
-            {/* Stats */}
-            <View style={styles.statsGrid}>
-              <StatChip icon="inbox" label="Total" value={notifications.length} color={colors.primary} />
-              <StatChip icon="mark_email_unread" label="Non lues" value={unreadCount} color="#0e7490" highlight />
-              <StatChip icon="drafts" label="Lues" value={readCount} color="#6b7280" />
+            <View
+              style={[
+                styles.unreadHeaderBadge,
+                unreadCount === 0 && styles.unreadHeaderBadgeEmpty,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.unreadHeaderBadgeValue,
+                  unreadCount === 0 && styles.unreadHeaderBadgeValueEmpty,
+                ]}
+              >
+                {unreadCount}
+              </Text>
+              <Text
+                style={[
+                  styles.unreadHeaderBadgeLabel,
+                  unreadCount === 0 && styles.unreadHeaderBadgeLabelEmpty,
+                ]}
+              >
+                non lue{unreadCount !== 1 ? 's' : ''}
+              </Text>
             </View>
+          </View>
 
-            {/* Search */}
-            <View style={styles.searchBar}>
-              <Icon name="search" size={18} color={colors.textMuted} />
+          <View style={styles.statsRow}>
+            <StatCard
+              icon="notifications"
+              label="Total"
+              value={totalCount}
+              iconColor={colors.primary}
+              iconBackground="#e8eefc"
+            />
+            <StatCard
+              icon="mark_email_unread"
+              label="Non lues"
+              value={unreadCount}
+              iconColor="#0e7490"
+              iconBackground="#ecfeff"
+            />
+            <StatCard
+              icon="drafts"
+              label="Lues"
+              value={readCount}
+              iconColor="#047857"
+              iconBackground="#ecfdf5"
+            />
+          </View>
+
+          <View style={styles.actionRow}>
+            <View style={styles.searchBox}>
+              <Icon name="search" size={19} color={colors.textMuted} />
               <TextInput
                 value={search}
                 onChangeText={setSearch}
-                placeholder="Rechercher..."
+                placeholder="Rechercher une notification…"
                 placeholderTextColor={colors.textMuted}
                 style={styles.searchInput}
+                returnKeyType="search"
               />
+
+              {search.length > 0 ? (
+                <Pressable
+                  style={styles.clearSearchButton}
+                  onPress={() => setSearch('')}
+                  hitSlop={8}
+                >
+                  <Icon
+                    name="close"
+                    size={17}
+                    color={colors.textMuted}
+                  />
+                </Pressable>
+              ) : null}
             </View>
 
-            {/* Filter tabs */}
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-              {FILTER_TABS.map((tab) => {
-                const active = filter === tab.key
-                const cnt = notifications.filter(tab.fn).length
-                return (
-                  <Pressable
-                    key={tab.key}
-                    style={[styles.tabChip, active && styles.tabChipActive]}
-                    onPress={() => setFilter(tab.key)}
-                  >
-                    <Text style={[styles.tabChipText, active && styles.tabChipTextActive]}>{tab.label}</Text>
-                    {tab.key === 'unread' && cnt > 0 && (
-                      <View style={styles.tabCountBadge}>
-                        <Text style={styles.tabCountText}>{cnt}</Text>
-                      </View>
-                    )}
-                  </Pressable>
-                )
-              })}
-            </ScrollView>
-          </View>
-        }
-        renderItem={({ item: group }) => (
-          <View style={{ marginBottom: 16 }}>
-            <Text style={styles.groupLabel}>{group.label}</Text>
-            <View style={{ gap: 10 }}>
-              {group.items.map((notif) => {
-                const type = inferType(notif.title, notif.body)
-                const meta = TYPE_META[type]
-                return (
-                  <Pressable
-                    key={notif.id}
-                    style={[styles.notifCard, !notif.is_read && styles.notifCardUnread]}
-                    onPress={() => handleSelect(notif)}
-                  >
-                    <View style={[styles.notifIcon, { backgroundColor: meta.bg }]}>
-                      <Icon name={meta.icon} size={20} color={meta.color} />
-                    </View>
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <View style={styles.notifTopLine}>
-                        <Text style={styles.notifTitle} numberOfLines={1}>{notif.title}</Text>
-                        <Text style={styles.notifTime}>{formatTime(notif.created_at)}</Text>
-                      </View>
-                      <Text style={styles.notifBody} numberOfLines={2}>{notif.body}</Text>
-                    </View>
-                    {!notif.is_read && <View style={styles.unreadDot} />}
-                  </Pressable>
-                )
-              })}
-            </View>
-          </View>
-        )}
-        ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <Icon name="notifications_off" size={40} color={colors.textMuted} />
-            <Text style={styles.emptyText}>Aucune notification</Text>
-          </View>
-        }
-        ListFooterComponent={
-          <PreferencesCard prefs={prefs} setPrefs={setPrefs} open={prefsOpen} setOpen={setPrefsOpen} />
-        }
-      />
-
-      {/* Detail modal */}
-      <Modal visible={!!selected} transparent animationType="slide" onRequestClose={() => setSelected(null)}>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalSheet}>
-            {selected && <DetailPanel notif={selected} onClose={() => setSelected(null)} />}
-          </View>
-        </View>
-      </Modal>
-    </>
-  )
-}
-
-function StatChip({ icon, label, value, color, highlight }: {
-  icon: string; label: string; value: number; color: string; highlight?: boolean
-}) {
-  return (
-    <View style={[styles.statChip, highlight && styles.statChipHighlight]}>
-      <View style={[styles.statChipIcon, { backgroundColor: highlight ? '#cffafe' : '#f3f4f6' }]}>
-        <Icon name={icon} size={16} color={color} />
-      </View>
-      <View>
-        <Text style={styles.statChipLabel}>{label}</Text>
-        <Text style={[styles.statChipValue, { color }]}>{value}</Text>
-      </View>
-    </View>
-  )
-}
-
-function DetailPanel({ notif, onClose }: { notif: Notification; onClose: () => void }) {
-  const type = inferType(notif.title, notif.body)
-  const meta = TYPE_META[type]
-
-  const ctaLabel =
-    type === 'delivery' ? 'Suivre la livraison'
-    : type === 'order' ? 'Voir la commande'
-    : type === 'prescription' || type === 'pharmacy' ? 'Voir les détails'
-    : null
-  const ctaIcon =
-    type === 'delivery' ? 'map'
-    : type === 'order' ? 'shopping_bag'
-    : 'description'
-
-  return (
-    <View style={{ padding: 20, gap: 16 }}>
-      <View style={styles.modalHandle} />
-
-      <View style={styles.modalHeaderRow}>
-        <View style={[styles.notifIcon, { backgroundColor: meta.bg }]}>
-          <Icon name={meta.icon} size={20} color={meta.color} />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.modalTypeLabel}>{meta.label}</Text>
-          <Text style={styles.modalTime}>{formatTime(notif.created_at)}</Text>
-        </View>
-        <Pressable onPress={onClose} style={styles.modalCloseBtn}>
-          <Icon name="close" size={20} color={colors.textMuted} />
-        </Pressable>
-      </View>
-
-      <Text style={styles.modalTitle}>{notif.title}</Text>
-      <Text style={styles.modalBody}>{notif.body}</Text>
-
-      <View style={{ gap: 10 }}>
-        {ctaLabel && (
-          <Pressable style={styles.modalPrimaryBtn}>
-            <Icon name={ctaIcon} size={16} color={colors.white} />
-            <Text style={styles.modalPrimaryBtnText}>{ctaLabel}</Text>
-          </Pressable>
-        )}
-        <Pressable style={styles.modalSecondaryBtn}>
-          <Icon name="chat" size={16} color={colors.primary} />
-          <Text style={styles.modalSecondaryBtnText}>Contacter le support</Text>
-        </Pressable>
-      </View>
-    </View>
-  )
-}
-
-function PreferencesCard({ prefs, setPrefs, open, setOpen }: {
-  prefs: { orders: boolean; delivery: boolean; prescription: boolean; pharmacy: boolean }
-  setPrefs: React.Dispatch<React.SetStateAction<{ orders: boolean; delivery: boolean; prescription: boolean; pharmacy: boolean }>>
-  open: boolean
-  setOpen: (v: boolean) => void
-}) {
-  const toggles: { key: keyof typeof prefs; label: string }[] = [
-    { key: 'orders', label: 'Statut des commandes' },
-    { key: 'delivery', label: 'Suivi livreur (En direct)' },
-    { key: 'prescription', label: 'Validation ordonnance' },
-    { key: 'pharmacy', label: 'Pharmacies de garde' },
-  ]
-
-  return (
-    <View style={styles.prefsCard}>
-      <Pressable style={styles.prefsHeader} onPress={() => setOpen(!open)}>
-        <Icon name="tune" size={18} color={colors.textSecondary} />
-        <Text style={styles.prefsTitle}>Préférences d'alertes</Text>
-        <View style={{ flex: 1 }} />
-        <Icon name={open ? 'expand_less' : 'expand_more'} size={20} color={colors.textMuted} />
-      </Pressable>
-
-      {open && (
-        <View style={{ gap: 14, marginTop: 12 }}>
-          {toggles.map(({ key, label }) => (
             <Pressable
-              key={key}
-              style={styles.prefRow}
-              onPress={() => setPrefs((p) => ({ ...p, [key]: !p[key] }))}
+              style={[
+                styles.markAllButton,
+                (unreadCount === 0 || markingAll)
+                  && styles.markAllButtonDisabled,
+              ]}
+              disabled={unreadCount === 0 || markingAll}
+              onPress={() => void handleMarkAllRead()}
             >
-              <Text style={styles.prefLabel}>{label}</Text>
-              <View style={[styles.switchTrack, prefs[key] && styles.switchTrackActive]}>
-                <View style={[styles.switchThumb, prefs[key] && styles.switchThumbActive]} />
-              </View>
+              {markingAll ? (
+                <ActivityIndicator
+                  size="small"
+                  color={colors.primary}
+                />
+              ) : (
+                <Icon
+                  name="done_all"
+                  size={18}
+                  color={
+                    unreadCount === 0
+                      ? colors.textMuted
+                      : colors.primary
+                  }
+                />
+              )}
+
+              <Text
+                style={[
+                  styles.markAllButtonText,
+                  unreadCount === 0
+                    && styles.markAllButtonTextDisabled,
+                ]}
+              >
+                Tout lire
+              </Text>
             </Pressable>
-          ))}
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filtersContent}
+          >
+            {FILTERS.map((item) => {
+              const active = filter === item.key
+              const count = filterCount(item.key)
+
+              return (
+                <Pressable
+                  key={item.key}
+                  style={[
+                    styles.filterButton,
+                    active && styles.filterButtonActive,
+                  ]}
+                  onPress={() => setFilter(item.key)}
+                >
+                  <Icon
+                    name={item.icon}
+                    size={16}
+                    color={
+                      active
+                        ? colors.white
+                        : colors.textSecondary
+                    }
+                  />
+
+                  <Text
+                    style={[
+                      styles.filterButtonText,
+                      active && styles.filterButtonTextActive,
+                    ]}
+                  >
+                    {item.label}
+                  </Text>
+
+                  {count > 0 ? (
+                    <View
+                      style={[
+                        styles.filterCount,
+                        active && styles.filterCountActive,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.filterCountText,
+                          active && styles.filterCountTextActive,
+                        ]}
+                      >
+                        {count}
+                      </Text>
+                    </View>
+                  ) : null}
+                </Pressable>
+              )
+            })}
+          </ScrollView>
+
+          {error ? (
+            <View style={styles.inlineError}>
+              <Icon
+                name="error_outline"
+                size={18}
+                color={colors.error}
+              />
+              <Text style={styles.inlineErrorText}>{error}</Text>
+              <Pressable
+                onPress={() => {
+                  setError(null)
+                  void handleRefresh()
+                }}
+              >
+                <Text style={styles.inlineRetryText}>Réessayer</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          <View style={styles.listIntroRow}>
+            <Text style={styles.listIntroTitle}>
+              {filter === 'all'
+                ? 'Toutes les notifications'
+                : FILTERS.find((item) => item.key === filter)?.label}
+            </Text>
+            <Text style={styles.listIntroCount}>
+              {filteredNotifications.length}
+            </Text>
+          </View>
+        </View>
+      }
+      renderSectionHeader={({ section }) => (
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionHeaderText}>{section.title}</Text>
         </View>
       )}
+      renderItem={({ item }) => (
+        <NotificationCard
+          notification={item}
+          opening={openingId === item.id}
+          onPress={() => void handleNotificationPress(item)}
+        />
+      )}
+      ItemSeparatorComponent={() => (
+        <View style={styles.itemSeparator} />
+      )}
+      SectionSeparatorComponent={() => (
+        <View style={styles.sectionSeparator} />
+      )}
+      ListEmptyComponent={
+        <EmptyState
+          hasSearch={search.trim().length > 0}
+          filter={filter}
+          onClear={() => {
+            setSearch('')
+            setFilter('all')
+          }}
+        />
+      }
+      ListFooterComponent={
+        notifications.length > 0 ? (
+          <View style={styles.footerNote}>
+            <Icon
+              name="info_outline"
+              size={17}
+              color={colors.textMuted}
+            />
+            <Text style={styles.footerNoteText}>
+              Les notifications liées à une commande ouvrent directement
+              son suivi détaillé.
+            </Text>
+          </View>
+        ) : null
+      }
+      showsVerticalScrollIndicator={false}
+    />
+  )
+}
+
+function StatCard({
+  icon,
+  label,
+  value,
+  iconColor,
+  iconBackground,
+}: {
+  icon: string
+  label: string
+  value: number
+  iconColor: string
+  iconBackground: string
+}) {
+  return (
+    <View style={styles.statCard}>
+      <View
+        style={[
+          styles.statIcon,
+          { backgroundColor: iconBackground },
+        ]}
+      >
+        <Icon name={icon} size={18} color={iconColor} />
+      </View>
+
+      <View>
+        <Text style={styles.statValue}>{value}</Text>
+        <Text style={styles.statLabel}>{label}</Text>
+      </View>
+    </View>
+  )
+}
+
+function NotificationCard({
+  notification,
+  opening,
+  onPress,
+}: {
+  notification: Notification
+  opening: boolean
+  onPress: () => void
+}) {
+  const presentation = getNotificationPresentation(notification)
+  const orderId = getNotificationOrderId(notification)
+
+  return (
+    <Pressable
+      style={({ pressed }) => [
+        styles.notificationCard,
+        !notification.is_read && styles.notificationCardUnread,
+        pressed && styles.notificationCardPressed,
+      ]}
+      onPress={onPress}
+      disabled={opening}
+    >
+      <View
+        style={[
+          styles.notificationIcon,
+          { backgroundColor: presentation.background },
+        ]}
+      >
+        <Icon
+          name={presentation.icon}
+          size={22}
+          color={presentation.color}
+        />
+      </View>
+
+      <View style={styles.notificationContent}>
+        <View style={styles.notificationMetaRow}>
+          <View style={styles.notificationCategoryRow}>
+            {!notification.is_read ? (
+              <View style={styles.unreadDot} />
+            ) : null}
+
+            <Text style={styles.notificationCategory}>
+              {presentation.category}
+            </Text>
+          </View>
+
+          <Text style={styles.notificationTime}>
+            {formatNotificationTime(notification.created_at)}
+          </Text>
+        </View>
+
+        <Text
+          style={[
+            styles.notificationTitle,
+            !notification.is_read
+              && styles.notificationTitleUnread,
+          ]}
+        >
+          {presentation.title}
+        </Text>
+
+        {presentation.body ? (
+          <Text
+            style={styles.notificationBody}
+            numberOfLines={3}
+          >
+            {presentation.body}
+          </Text>
+        ) : null}
+
+        {orderId ? (
+          <View style={styles.notificationAction}>
+            <Text style={styles.notificationActionText}>
+              Voir la commande #{orderId}
+            </Text>
+            <Icon
+              name="arrow_forward"
+              size={15}
+              color={colors.primary}
+            />
+          </View>
+        ) : null}
+      </View>
+
+      {opening ? (
+        <ActivityIndicator
+          size="small"
+          color={colors.primary}
+        />
+      ) : orderId ? (
+        <Icon
+          name="chevron_right"
+          size={22}
+          color={colors.textMuted}
+        />
+      ) : null}
+    </Pressable>
+  )
+}
+
+function EmptyState({
+  hasSearch,
+  filter,
+  onClear,
+}: {
+  hasSearch: boolean
+  filter: FilterKey
+  onClear: () => void
+}) {
+  const isDefaultEmpty = !hasSearch && filter === 'all'
+
+  return (
+    <View style={styles.emptyState}>
+      <View style={styles.emptyIcon}>
+        <Icon
+          name={
+            isDefaultEmpty
+              ? 'notifications_none'
+              : 'filter_alt_off'
+          }
+          size={30}
+          color={colors.primary}
+        />
+      </View>
+
+      <Text style={styles.emptyTitle}>
+        {isDefaultEmpty
+          ? 'Aucune notification pour le moment'
+          : 'Aucun résultat'}
+      </Text>
+
+      <Text style={styles.emptyDescription}>
+        {isDefaultEmpty
+          ? 'Les mises à jour de vos commandes apparaîtront ici.'
+          : 'Aucune notification ne correspond à votre recherche ou à ce filtre.'}
+      </Text>
+
+      {!isDefaultEmpty ? (
+        <Pressable
+          style={styles.emptyButton}
+          onPress={onClear}
+        >
+          <Icon name="restart_alt" size={17} color={colors.primary} />
+          <Text style={styles.emptyButtonText}>
+            Réinitialiser les filtres
+          </Text>
+        </Pressable>
+      ) : null}
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.surface },
-  content: { padding: 16, paddingBottom: 24 },
-  centerScreen: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface },
-
-  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  title: { fontSize: 22, fontWeight: '700', color: colors.primary },
-  markAllBtn: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  markAllText: { fontSize: 12, fontWeight: '600', color: colors.primary },
-
-  statsGrid: { flexDirection: 'row', gap: 8 },
-  statChip: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: colors.surfaceLowest, borderWidth: 1, borderColor: colors.outlineVariant,
-    borderRadius: 12, padding: 10,
+  screen: {
+    flex: 1,
+    backgroundColor: colors.surface,
   },
-  statChipHighlight: { borderColor: '#22d3ee' },
-  statChipIcon: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
-  statChipLabel: { fontSize: 10, color: colors.textMuted },
-  statChipValue: { fontSize: 16, fontWeight: '700' },
-
-  searchBar: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: colors.surfaceLowest, borderWidth: 1, borderColor: colors.outlineVariant,
-    borderRadius: 12, paddingHorizontal: 12, paddingVertical: 4,
+  content: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 32,
+    flexGrow: 1,
   },
-  searchInput: { flex: 1, paddingVertical: 10, fontSize: 14, color: colors.textPrimary },
-
-  tabChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999,
-    backgroundColor: colors.surfaceLowest, borderWidth: 1, borderColor: colors.outlineVariant,
+  centerScreen: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    paddingHorizontal: 28,
+    backgroundColor: colors.surface,
   },
-  tabChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-  tabChipText: { fontSize: 12, fontWeight: '600', color: colors.textSecondary },
-  tabChipTextActive: { color: colors.white },
-  tabCountBadge: { backgroundColor: '#cffafe', borderRadius: 999, paddingHorizontal: 5, paddingVertical: 1 },
-  tabCountText: { fontSize: 10, fontWeight: '700', color: '#0e7490' },
-
-  groupLabel: { fontSize: 11, fontWeight: '700', color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 },
-
-  notifCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    backgroundColor: colors.surfaceLowest, borderWidth: 1, borderColor: colors.outlineVariant,
-    borderRadius: 14, padding: 12,
+  loadingText: {
+    fontSize: 13,
+    color: colors.textSecondary,
   },
-  notifCardUnread: { borderLeftWidth: 3, borderLeftColor: colors.primary },
-  notifIcon: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
-  notifTopLine: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
-  notifTitle: { fontSize: 13, fontWeight: '600', color: colors.textPrimary, flexShrink: 1 },
-  notifTime: { fontSize: 11, color: colors.textMuted },
-  notifBody: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
-  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary },
-
+  errorIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.errorBg,
+  },
+  errorTitle: {
+    marginTop: 3,
+    fontSize: 17,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    textAlign: 'center',
+  },
+  errorDescription: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  },
+  retryButton: {
+    marginTop: 5,
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    paddingHorizontal: 18,
+    borderRadius: 12,
+    backgroundColor: colors.primary,
+  },
+  retryButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.white,
+  },
+  headerContent: {
+    gap: 14,
+    marginBottom: 16,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  headerText: {
+    flex: 1,
+    gap: 3,
+  },
+  title: {
+    fontSize: 25,
+    fontWeight: '800',
+    color: colors.primary,
+  },
+  subtitle: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: colors.textSecondary,
+  },
+  unreadHeaderBadge: {
+    minWidth: 68,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 13,
+    backgroundColor: '#ecfeff',
+    borderWidth: 1,
+    borderColor: '#a5f3fc',
+  },
+  unreadHeaderBadgeEmpty: {
+    backgroundColor: '#f9fafb',
+    borderColor: colors.outlineVariant,
+  },
+  unreadHeaderBadgeValue: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#0e7490',
+  },
+  unreadHeaderBadgeValueEmpty: {
+    color: colors.textMuted,
+  },
+  unreadHeaderBadgeLabel: {
+    marginTop: 1,
+    fontSize: 9,
+    fontWeight: '600',
+    color: '#0e7490',
+  },
+  unreadHeaderBadgeLabelEmpty: {
+    color: colors.textMuted,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  statCard: {
+    flex: 1,
+    minHeight: 67,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 10,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: colors.outlineVariant,
+    backgroundColor: colors.surfaceLowest,
+  },
+  statIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.textPrimary,
+  },
+  statLabel: {
+    marginTop: 1,
+    fontSize: 9,
+    color: colors.textMuted,
+  },
+  actionRow: {
+    gap: 9,
+  },
+  searchBox: {
+    minHeight: 47,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 13,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: colors.outlineVariant,
+    backgroundColor: colors.surfaceLowest,
+  },
+  searchInput: {
+    flex: 1,
+    paddingVertical: 10,
+    fontSize: 13,
+    color: colors.textPrimary,
+  },
+  clearSearchButton: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  markAllButton: {
+    alignSelf: 'flex-end',
+    minHeight: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 11,
+    borderRadius: 10,
+    backgroundColor: '#eef3ff',
+  },
+  markAllButtonDisabled: {
+    backgroundColor: '#f3f4f6',
+  },
+  markAllButtonText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  markAllButtonTextDisabled: {
+    color: colors.textMuted,
+  },
+  filtersContent: {
+    gap: 8,
+    paddingRight: 6,
+  },
+  filterButton: {
+    minHeight: 37,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 11,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.outlineVariant,
+    backgroundColor: colors.surfaceLowest,
+  },
+  filterButtonActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary,
+  },
+  filterButtonText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  filterButtonTextActive: {
+    color: colors.white,
+  },
+  filterCount: {
+    minWidth: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 5,
+    borderRadius: 10,
+    backgroundColor: '#f3f4f6',
+  },
+  filterCountActive: {
+    backgroundColor: 'rgba(255,255,255,0.18)',
+  },
+  filterCountText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: colors.textSecondary,
+  },
+  filterCountTextActive: {
+    color: colors.white,
+  },
+  inlineError: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    backgroundColor: colors.errorBg,
+  },
+  inlineErrorText: {
+    flex: 1,
+    fontSize: 11,
+    lineHeight: 16,
+    color: colors.errorText,
+  },
+  inlineRetryText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.error,
+  },
+  listIntroRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 2,
+  },
+  listIntroTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  listIntroCount: {
+    minWidth: 26,
+    height: 26,
+    textAlign: 'center',
+    textAlignVertical: 'center',
+    borderRadius: 13,
+    fontSize: 11,
+    fontWeight: '800',
+    color: colors.primary,
+    backgroundColor: '#eef3ff',
+  },
+  sectionHeader: {
+    paddingVertical: 7,
+    backgroundColor: colors.surface,
+  },
+  sectionHeaderText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    color: colors.textMuted,
+  },
+  notificationCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    padding: 13,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: colors.outlineVariant,
+    backgroundColor: colors.surfaceLowest,
+  },
+  notificationCardUnread: {
+    borderColor: '#bfdbfe',
+    backgroundColor: '#fbfdff',
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
+  },
+  notificationCardPressed: {
+    opacity: 0.78,
+  },
+  notificationIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notificationContent: {
+    flex: 1,
+    minWidth: 0,
+  },
+  notificationMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  notificationCategoryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  unreadDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.primary,
+  },
+  notificationCategory: {
+    fontSize: 9,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.45,
+    color: colors.textMuted,
+  },
+  notificationTime: {
+    fontSize: 9,
+    color: colors.textMuted,
+  },
+  notificationTitle: {
+    marginTop: 4,
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  notificationTitleUnread: {
+    fontWeight: '800',
+  },
+  notificationBody: {
+    marginTop: 3,
+    fontSize: 11,
+    lineHeight: 16,
+    color: colors.textSecondary,
+  },
+  notificationAction: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  notificationActionText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  itemSeparator: {
+    height: 9,
+  },
+  sectionSeparator: {
+    height: 8,
+  },
   emptyState: {
-    alignItems: 'center', justifyContent: 'center', paddingVertical: 56, gap: 10,
-    backgroundColor: colors.surfaceLowest, borderRadius: 16, borderWidth: 1, borderColor: colors.outlineVariant,
+    marginTop: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 24,
+    paddingVertical: 42,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.outlineVariant,
+    backgroundColor: colors.surfaceLowest,
   },
-  emptyText: { fontSize: 13, color: colors.textMuted },
-
-  prefsCard: {
-    backgroundColor: colors.surfaceLowest, borderRadius: 16,
-    borderWidth: 1, borderColor: colors.outlineVariant, padding: 16, marginTop: 4,
+  emptyIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#eef3ff',
   },
-  prefsHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  prefsTitle: { fontSize: 14, fontWeight: '600', color: colors.textPrimary },
-  prefRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  prefLabel: { fontSize: 13, color: colors.textSecondary },
-  switchTrack: { width: 38, height: 22, borderRadius: 11, backgroundColor: colors.outlineVariant, padding: 2, justifyContent: 'center' },
-  switchTrackActive: { backgroundColor: colors.accentLight },
-  switchThumb: { width: 18, height: 18, borderRadius: 9, backgroundColor: colors.white },
-  switchThumbActive: { transform: [{ translateX: 16 }] },
-
-  // Modal
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
-  modalSheet: { backgroundColor: colors.surfaceLowest, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '80%' },
-  modalHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.outlineVariant, alignSelf: 'center', marginBottom: 4 },
-  modalHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  modalTypeLabel: { fontSize: 10, fontWeight: '700', color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
-  modalTime: { fontSize: 12, color: colors.accentLight, fontWeight: '500', marginTop: 2 },
-  modalCloseBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
-  modalTitle: { fontSize: 18, fontWeight: '700', color: colors.primary },
-  modalBody: { fontSize: 14, color: colors.textSecondary, lineHeight: 20 },
-  modalPrimaryBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    backgroundColor: colors.primary, paddingVertical: 13, borderRadius: 12,
+  emptyTitle: {
+    marginTop: 2,
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    textAlign: 'center',
   },
-  modalPrimaryBtnText: { color: colors.white, fontWeight: '600', fontSize: 14 },
-  modalSecondaryBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    borderWidth: 1, borderColor: colors.outlineVariant, paddingVertical: 13, borderRadius: 12,
+  emptyDescription: {
+    fontSize: 11,
+    lineHeight: 17,
+    color: colors.textSecondary,
+    textAlign: 'center',
   },
-  modalSecondaryBtnText: { color: colors.primary, fontWeight: '600', fontSize: 14 },
+  emptyButton: {
+    marginTop: 5,
+    minHeight: 38,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: '#eef3ff',
+  },
+  emptyButtonText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  footerNote: {
+    marginTop: 18,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 7,
+    paddingHorizontal: 4,
+  },
+  footerNoteText: {
+    flex: 1,
+    fontSize: 10,
+    lineHeight: 15,
+    color: colors.textMuted,
+  },
 })

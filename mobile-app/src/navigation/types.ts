@@ -9,9 +9,16 @@ export type AuthStackParamList = {
   ForgotPassword: undefined
 }
 
+export type PharmAgentAutoRequest = {
+  requestId: string
+  prompt: string
+}
+
 export type AppTabParamList = {
   Dashboard: undefined
-  Assistant: undefined
+  Assistant:
+    | { autoRequest?: PharmAgentAutoRequest }
+    | undefined
   Orders: undefined
   Notifications: undefined
   Profile: undefined

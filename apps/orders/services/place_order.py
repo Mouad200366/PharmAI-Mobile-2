@@ -7,7 +7,7 @@ from rest_framework.exceptions import ValidationError
 from apps.catalog.models import Medicine
 
 from ..constants import OrderStatus, PaymentMethod, PrescriptionMode, PrescriptionStatus
-from ..models import Order, OrderItem, Prescription
+from ..models import Order, OrderItem, OrderStatusHistory, Prescription
 from .agent_selection import select_agent_for_order
 from .pharmacy_selection import select_pharmacy_for_order
 from .stock import decrement_stock
@@ -98,6 +98,15 @@ def place_order(
         prescription_mode=prescription_mode,
         payment_method=payment_method,
         notes=notes,
+    )
+
+    # Record the first real timeline event as part of the same transaction.
+    # If a later step fails, both the order and this history entry roll back.
+    OrderStatusHistory.objects.create(
+        order=order,
+        status=initial_status,
+        changed_by=customer,
+        note='Order created.',
     )
 
     for stock, qty, price in locked:

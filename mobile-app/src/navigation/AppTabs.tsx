@@ -1,4 +1,6 @@
+import { useCallback, useMemo, useState } from 'react'
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs'
+import { useFocusEffect } from '@react-navigation/native'
 
 import type { AppTabParamList } from './types'
 
@@ -8,12 +10,60 @@ import MyOrders from '../screens/patient/MyOrders'
 import Notifications from '../screens/patient/Notifications'
 import Profile from '../screens/patient/Profile'
 import Icon from '../components/ui/Icon'
+import { notificationsApi } from '../api/notifications'
 
 const Tab = createBottomTabNavigator<AppTabParamList>()
 
+const BADGE_REFRESH_INTERVAL_MS = 30_000
+
 export default function AppTabs() {
+  const [unreadCount, setUnreadCount] = useState(0)
+
+  const loadUnreadCount = useCallback(async () => {
+    try {
+      const response = await notificationsApi.unreadCount()
+      const count = Number(response.data.unread_count)
+
+      setUnreadCount(
+        Number.isFinite(count) && count > 0
+          ? Math.floor(count)
+          : 0,
+      )
+    } catch {
+      // A badge is secondary UI. A temporary network error should not
+      // interrupt navigation or show a blocking error to the patient.
+    }
+  }, [])
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadUnreadCount()
+
+      const interval = setInterval(() => {
+        void loadUnreadCount()
+      }, BADGE_REFRESH_INTERVAL_MS)
+
+      return () => {
+        clearInterval(interval)
+      }
+    }, [loadUnreadCount]),
+  )
+
+  const notificationBadge = useMemo(() => {
+    if (unreadCount <= 0) {
+      return undefined
+    }
+
+    return unreadCount > 99 ? '99+' : unreadCount
+  }, [unreadCount])
+
   return (
     <Tab.Navigator
+      screenListeners={{
+        state: () => {
+          void loadUnreadCount()
+        },
+      }}
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: '#00236f',
@@ -54,7 +104,7 @@ export default function AppTabs() {
         name="Orders"
         component={MyOrders}
         options={{
-          tabBarLabel: 'My Orders',
+          tabBarLabel: 'Mes commandes',
           tabBarIcon: ({ color, size }) => (
             <Icon
               name="local_shipping"
@@ -68,11 +118,30 @@ export default function AppTabs() {
       <Tab.Screen
         name="Notifications"
         component={Notifications}
+        listeners={{
+          focus: () => {
+            void loadUnreadCount()
+          },
+          blur: () => {
+            void loadUnreadCount()
+          },
+        }}
         options={{
           tabBarLabel: 'Notifications',
+          tabBarBadge: notificationBadge,
+          tabBarBadgeStyle: {
+            backgroundColor: '#dc2626',
+            color: '#ffffff',
+            fontSize: 10,
+            fontWeight: '700',
+          },
           tabBarIcon: ({ color, size }) => (
             <Icon
-              name="notifications"
+              name={
+                unreadCount > 0
+                  ? 'notifications_active'
+                  : 'notifications'
+              }
               size={size}
               color={color}
             />

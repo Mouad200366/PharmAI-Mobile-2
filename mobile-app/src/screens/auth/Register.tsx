@@ -30,10 +30,14 @@ function passwordStrength(pw: string): 0 | 1 | 2 | 3 {
 const STRENGTH_LABEL = ['', 'Faible', 'Moyen', 'Fort']
 const STRENGTH_COLOR = ['', '#ef4444', '#fbbf24', '#22c55e']
 
-const GENDER_OPTIONS: { value: Gender; label: string }[] = [
+type RegistrationGender = Extract<Gender, 'M' | 'F'>
+
+const GENDER_OPTIONS: {
+  value: RegistrationGender
+  label: string
+}[] = [
   { value: 'M', label: 'Homme' },
   { value: 'F', label: 'Femme' },
-  { value: 'O', label: 'Autre' },
 ]
 
 // Mobile port of the web app's Register.tsx. Same fields, same client-side
@@ -49,7 +53,7 @@ export default function Register({ navigation }: Props) {
     phone: '',
     cin: '',
     dateOfBirth: '',
-    gender: '' as Gender | '',
+    gender: '' as RegistrationGender | '',
     password: '',
     passwordConfirm: '',
     acceptTerms: false,
@@ -83,6 +87,17 @@ export default function Register({ navigation }: Props) {
       setErrors(errs)
       return
     }
+    const gender = form.gender
+
+    // TypeScript needs an explicit guard here because the form also uses
+    // an empty string before the patient selects Homme or Femme.
+    if (!gender) {
+      setErrors({
+        gender: 'Veuillez sélectionner votre sexe',
+      })
+      return
+    }
+
     setErrors({})
     setLoading(true)
     try {
@@ -93,7 +108,7 @@ export default function Register({ navigation }: Props) {
         first_name: form.firstName,
         last_name: form.lastName,
         date_of_birth: form.dateOfBirth,
-        gender: form.gender as Gender,
+        gender,
         password: form.password,
         password_confirm: form.passwordConfirm,
       })

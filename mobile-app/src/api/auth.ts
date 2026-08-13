@@ -1,6 +1,6 @@
 import client from './client'
 
-export type Gender = 'M' | 'F' | 'O'
+export type Gender = 'M' | 'F'
 export type OTPPurpose = 'signup' | 'login' | 'password_reset'
 
 export interface SignUpPayload {
@@ -22,19 +22,49 @@ export interface TokenPair {
 }
 
 export const authApi = {
-  signUp: (data: SignUpPayload) => client.post<{ detail: string }>('/auth/signup/', data),
+  signUp: (data: SignUpPayload) =>
+    client.post<{ detail: string }>('/auth/signup/', data),
 
-  requestOTP: (phone: string, purpose: OTPPurpose = 'signup') =>
-    client.post<{ detail: string }>('/auth/request-otp/', { phone, purpose }),
+  requestOTP: (
+    phone: string,
+    purpose: OTPPurpose = 'signup',
+  ) =>
+    client.post<{ detail: string }>('/auth/request-otp/', {
+      phone,
+      purpose,
+    }),
 
-  verifyOTP: (phone: string, code: string, purpose: OTPPurpose = 'signup') =>
-    client.post<TokenPair>('/auth/verify-otp/', { phone, code, purpose }),
+  verifyOTP: (
+    phone: string,
+    code: string,
+    purpose: OTPPurpose = 'signup',
+  ) =>
+    client.post<TokenPair>('/auth/verify-otp/', {
+      phone,
+      code,
+      purpose,
+    }),
 
   login: (phone: string, password: string) =>
-    client.post<TokenPair>('/auth/login/', { phone, password }),
+    client.post<TokenPair>('/auth/login/', {
+      phone,
+      password,
+    }),
 
-  logout: (refresh: string) => client.post<{ detail: string }>('/auth/logout/', { refresh }),
+  logout: (refresh: string) =>
+    client.post<{ detail: string }>('/auth/logout/', {
+      refresh,
+    }),
 
-  passwordChange: (old_password: string, new_password: string) =>
-    client.post<{ detail: string }>('/users/password/change/', { old_password, new_password }),
+  passwordChange: (
+    old_password: string,
+    new_password: string,
+  ) =>
+    client.post<{ detail: string }>(
+      '/users/password/change/',
+      {
+        old_password,
+        new_password,
+      },
+    ),
 }

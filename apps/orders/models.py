@@ -59,6 +59,43 @@ class Order(BaseModel):
         return f'Order #{self.pk} ({self.get_status_display()})'
 
 
+class OrderStatusHistory(BaseModel):
+    """Immutable record of every status reached by an order.
+
+    The mobile application uses these records to display a truthful timeline
+    with the real timestamp of each order step. ``changed_by`` is optional
+    because some transitions are performed automatically by payment webhooks
+    or background services.
+    """
+
+    order = models.ForeignKey(
+        Order,
+        on_delete=models.CASCADE,
+        related_name='status_history',
+    )
+    status = models.CharField(
+        max_length=24,
+        choices=OrderStatus.choices,
+    )
+    changed_by = models.ForeignKey(
+        'users.User',
+        on_delete=models.SET_NULL,
+        related_name='+',
+        null=True,
+        blank=True,
+    )
+    note = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ('created_at', 'id')
+        indexes = (
+            models.Index(fields=('order', 'created_at')),
+        )
+
+    def __str__(self):
+        return f'Order #{self.order_id}: {self.get_status_display()}'
+
+
 class OrderItem(BaseModel):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='items')
     medicine = models.ForeignKey(

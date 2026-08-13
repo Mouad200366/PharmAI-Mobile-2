@@ -31,6 +31,21 @@ type Props = NativeStackScreenProps<
   'MedicineDetails'
 >
 
+function buildMedicinePrompt(medicine: Medicine) {
+  const genericName = (medicine.generic_name ?? '').trim()
+  const genericDetails = genericName
+    ? ` (nom générique : ${genericName})`
+    : ''
+
+  return (
+    `Donne-moi des informations complètes et fiables sur le médicament « ${medicine.name} »${genericDetails}. ` +
+    `Explique clairement ses indications, son mode d’utilisation général, les précautions à prendre, ` +
+    `les contre-indications, les effets indésirables possibles et les interactions médicamenteuses importantes. ` +
+    `Précise également s’il nécessite une ordonnance et rappelle que ces informations ne remplacent pas ` +
+    `l’avis d’un médecin ou d’un pharmacien.`
+  )
+}
+
 function formatPrice(
   price: string | null,
   currency: string,
@@ -419,6 +434,12 @@ export default function MedicineDetails({
           onPress={() =>
             navigation.navigate('Tabs', {
               screen: 'Assistant',
+              params: {
+                autoRequest: {
+                  requestId: `${medicine.id}-${Date.now()}`,
+                  prompt: buildMedicinePrompt(medicine),
+                },
+              },
             })
           }
         >

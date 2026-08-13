@@ -8,6 +8,12 @@ export type OrderStatus =
 export type PrescriptionMode = 'none' | 'photo' | 'pickup'
 export type PaymentMethod = 'cash' | 'card'
 
+export interface PrescriptionPhotoUpload {
+  uri: string
+  name: string
+  type: string
+}
+
 export interface OrderItem {
   id: number
   medicine: number
@@ -25,6 +31,12 @@ export interface Prescription {
   verified_at: string | null
 }
 
+export interface OrderStatusHistoryEntry {
+  id: number
+  status: OrderStatus
+  created_at: string
+}
+
 export interface Order {
   id: number
   status: OrderStatus
@@ -35,6 +47,7 @@ export interface Order {
   delivery_longitude: number | null
   items: OrderItem[]
   prescription: Prescription | null
+  status_history: OrderStatusHistoryEntry[]
   items_total: string
   delivery_fee: string
   grand_total: string
@@ -50,6 +63,7 @@ export interface CreateOrderPayload {
   longitude: number
   prescription_mode: PrescriptionMode
   payment_method: PaymentMethod
+  prescription_photo?: PrescriptionPhotoUpload | null
   notes?: string
 }
 
@@ -100,7 +114,49 @@ export const ordersApi = {
 
   detail: (id: number) => client.get<Order>(`/orders/${id}/`),
 
-  create: (data: CreateOrderPayload) => client.post<Order>('/orders/', data),
+  create: (data: CreateOrderPayload) => {
+    if (!data.prescription_photo) {
+      const {
+        prescription_photo: _prescriptionPhoto,
+        ...jsonPayload
+      } = data
+
+      return client.post<Order>('/orders/', jsonPayload)
+    }
+
+    const form = new FormData()
+
+    form.append('items', JSON.stringify(data.items))
+    form.append('delivery_address', data.delivery_address)
+    form.append('latitude', String(data.latitude))
+    form.append('longitude', String(data.longitude))
+    form.append('prescription_mode', data.prescription_mode)
+    form.append('payment_method', data.payment_method)
+
+    if (data.notes) {
+      form.append('notes', data.notes)
+    }
+
+    form.append(
+      'prescription_photo',
+      {
+        uri: data.prescription_photo.uri,
+        name: data.prescription_photo.name,
+        type: data.prescription_photo.type,
+      } as unknown as Blob,
+    )
+
+    return client.post<Order>(
+      '/orders/',
+      form,
+      {
+        // Let React Native/Axios generate the multipart boundary.
+        headers: {
+          'Content-Type': undefined,
+        },
+      },
+    )
+  },
 
   cancel: (id: number) => client.post<Order>(`/orders/${id}/cancel/`),
 

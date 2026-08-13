@@ -29,6 +29,13 @@ class User(AbstractBaseUser, PermissionsMixin):
         choices=UserRole.choices,
         default=UserRole.PATIENT,
     )
+    avatar = models.ImageField(
+        _('profile photo'),
+        upload_to='avatars/%Y/%m/',
+        blank=True,
+        null=True,
+        max_length=255,
+    )
 
     is_phone_verified = models.BooleanField(_('phone verified'), default=False)
     is_active = models.BooleanField(_('active'), default=True)

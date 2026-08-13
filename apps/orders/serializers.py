@@ -1,7 +1,13 @@
 from rest_framework import serializers
 
 from .constants import PaymentMethod, PrescriptionMode
-from .models import ChatMessage, Order, OrderItem, Prescription
+from .models import (
+    ChatMessage,
+    Order,
+    OrderItem,
+    OrderStatusHistory,
+    Prescription,
+)
 
 
 class OrderItemInputSerializer(serializers.Serializer):
@@ -41,6 +47,15 @@ class PrescriptionReadSerializer(serializers.ModelSerializer):
         )
 
 
+class OrderStatusHistoryReadSerializer(serializers.ModelSerializer):
+    """Safe, read-only timeline data exposed to the patient application."""
+
+    class Meta:
+        model = OrderStatusHistory
+        fields = ('id', 'status', 'created_at')
+        read_only_fields = fields
+
+
 class _BaseOrderSerializer(serializers.ModelSerializer):
     items = OrderItemReadSerializer(many=True, read_only=True)
     prescription = PrescriptionReadSerializer(read_only=True)
@@ -57,12 +72,14 @@ class _BaseOrderSerializer(serializers.ModelSerializer):
 class CustomerOrderSerializer(_BaseOrderSerializer):
     """Customer view — pharmacy identity stripped."""
 
+    status_history = OrderStatusHistoryReadSerializer(many=True, read_only=True)
+
     class Meta:
         model = Order
         fields = (
             'id', 'status', 'prescription_mode', 'payment_method',
             'delivery_address', 'delivery_latitude', 'delivery_longitude',
-            'items', 'prescription',
+            'items', 'prescription', 'status_history',
             'items_total', 'delivery_fee', 'grand_total',
             'notes', 'created_at', 'updated_at',
         )
