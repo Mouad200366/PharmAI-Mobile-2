@@ -15,10 +15,15 @@
 // SSE framing as the web version once we have the text.
 import { PHARMAGENT_URL } from '../config/env'
 
+export interface PharmAgentHealth {
+  status: string
+  message?: string
+}
+
 export interface AssistRequest {
   user_query: string
-  user_lat?: number
-  user_lng?: number
+  user_lat: number
+  user_lng: number
   has_prescription?: boolean
 }
 
@@ -63,6 +68,97 @@ export interface AssistErrorPayload {
 }
 
 export type AssistEvent = AssistStepPayload | AssistFinalPayload | AssistErrorPayload
+
+/**
+ * Checks whether the standalone PharmAgent FastAPI service is reachable.
+ *
+ * A small timeout prevents the UI from waiting indefinitely when the
+ * service is stopped or the phone cannot reach the development machine.
+ */
+export function checkPharmAgentHealth(
+  timeoutMs = 3000,
+): Promise<PharmAgentHealth> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    let finished = false
+
+    const timeout = setTimeout(() => {
+      if (finished) {
+        return
+      }
+
+      finished = true
+      xhr.abort()
+      reject(
+        new Error(
+          'PharmAgent health check timed out',
+        ),
+      )
+    }, timeoutMs)
+
+    function finish() {
+      clearTimeout(timeout)
+    }
+
+    xhr.open('GET', `${PHARMAGENT_URL}/health`)
+
+    xhr.onload = () => {
+      if (finished) {
+        return
+      }
+
+      finished = true
+      finish()
+
+      if (
+        xhr.status < 200
+        || xhr.status >= 300
+      ) {
+        reject(
+          new Error(
+            `PharmAgent health check failed: ${xhr.status}`,
+          ),
+        )
+        return
+      }
+
+      try {
+        const data = JSON.parse(
+          xhr.responseText,
+        ) as PharmAgentHealth
+
+        resolve(data)
+      } catch {
+        reject(
+          new Error(
+            'Invalid PharmAgent health response',
+          ),
+        )
+      }
+    }
+
+    xhr.onerror = () => {
+      if (finished) {
+        return
+      }
+
+      finished = true
+      finish()
+
+      reject(
+        new Error(
+          'PharmAgent health check network error',
+        ),
+      )
+    }
+
+    xhr.onabort = () => {
+      finish()
+    }
+
+    xhr.send()
+  })
+}
 
 /**
  * Streams the /assist-stream SSE endpoint, invoking onEvent for every
@@ -123,8 +219,6 @@ export function streamAssist(
 
     xhr.send(
       JSON.stringify({
-        user_lat: 33.5731,
-        user_lng: -7.5898,
         has_prescription: false,
         ...request,
       }),

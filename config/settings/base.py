@@ -204,13 +204,20 @@ STRIPE_CURRENCY = config('STRIPE_CURRENCY', default='MAD')
 # --- Channels (Phase 6) ---
 # Redis address: docker compose maps the container's 6379 → host 6380.
 REDIS_HOST = config('REDIS_HOST', default='127.0.0.1')
-REDIS_PORT = config('REDIS_PORT', default=6380, cast=int)
+REDIS_PORT = config('REDIS_PORT', default=6381, cast=int)
 
 CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
         'CONFIG': {
-            'hosts': [(REDIS_HOST, REDIS_PORT)],
+            'hosts': [
+                {
+                    'host': REDIS_HOST,
+                    'port': REDIS_PORT,
+                    'socket_timeout': 10,
+                    'socket_connect_timeout': 5,
+                },
+            ],
         },
     },
 }

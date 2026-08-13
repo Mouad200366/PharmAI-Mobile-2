@@ -26,7 +26,12 @@ import {
   type Medicine,
 } from '../../api/catalog'
 import { firstError } from '../../api/errors'
+import {
+  createOrderTrackingSocket,
+  parseOrderTrackingEvent,
+} from '../../api/orderRealtime'
 import { useCartStore } from '../../store/cartStore'
+import { tokenStorage } from '../../store/tokenStorage'
 import Icon from '../../components/ui/Icon'
 import { colors } from '../../theme/colors'
 
@@ -160,6 +165,7 @@ export default function OrderDetail({
 }: Props) {
   const { id } = route.params
   const hasLoadedOnce = useRef(false)
+  const realtimeReloadingRef = useRef(false)
 
   const [order, setOrder] = useState<Order | null>(null)
   const [loading, setLoading] = useState(true)
@@ -182,17 +188,132 @@ export default function OrderDetail({
     }
   }, [id])
 
+  const reloadFromRealtime = useCallback(async () => {
+    if (realtimeReloadingRef.current) {
+      return
+    }
+
+    realtimeReloadingRef.current = true
+
+    try {
+      await loadOrder()
+    } finally {
+      realtimeReloadingRef.current = false
+    }
+  }, [loadOrder])
+
   useFocusEffect(
     useCallback(() => {
+      let active = true
+      let socket: WebSocket | null = null
+      let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+
       if (!hasLoadedOnce.current) {
         setLoading(true)
       }
 
       void loadOrder().finally(() => {
+        if (!active) {
+          return
+        }
+
         hasLoadedOnce.current = true
         setLoading(false)
       })
-    }, [loadOrder]),
+
+      const scheduleReconnect = () => {
+        if (!active || reconnectTimer !== null) {
+          return
+        }
+
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null
+          void connectRealtime()
+        }, 3000)
+      }
+
+      const connectRealtime = async () => {
+        const accessToken = await tokenStorage.getAccessToken()
+
+        if (!active || !accessToken) {
+          return
+        }
+
+        try {
+          const nextSocket = createOrderTrackingSocket(
+            id,
+            accessToken,
+          )
+
+          socket = nextSocket
+
+          nextSocket.onmessage = (event) => {
+            if (!active) {
+              return
+            }
+
+            const realtimeEvent =
+              parseOrderTrackingEvent(event.data)
+
+            if (!realtimeEvent) {
+              return
+            }
+
+            if (
+              realtimeEvent.type === 'status_change'
+              && realtimeEvent.order_id === id
+            ) {
+              // Reflect the new status immediately for a responsive UI.
+              // Then reload the order so status_history and any related
+              // server-side changes remain the source of truth.
+              setOrder((currentOrder) =>
+                currentOrder
+                  ? {
+                      ...currentOrder,
+                      status: realtimeEvent.status,
+                    }
+                  : currentOrder,
+              )
+
+              void reloadFromRealtime()
+            }
+          }
+
+          nextSocket.onerror = () => {
+            // onclose schedules the retry. Keep websocket failures
+            // non-blocking because HTTP refresh remains available.
+          }
+
+          nextSocket.onclose = () => {
+            if (socket === nextSocket) {
+              socket = null
+            }
+
+            scheduleReconnect()
+          }
+        } catch {
+          scheduleReconnect()
+        }
+      }
+
+      void connectRealtime()
+
+      return () => {
+        active = false
+
+        if (reconnectTimer !== null) {
+          clearTimeout(reconnectTimer)
+        }
+
+        if (socket) {
+          socket.close()
+        }
+      }
+    }, [
+      id,
+      loadOrder,
+      reloadFromRealtime,
+    ]),
   )
 
   const handleRefresh = useCallback(async () => {
