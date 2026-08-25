@@ -47,6 +47,9 @@ import {
   useAuthStore,
 } from '../../store/authStore'
 import {
+  getInstallationDeviceId,
+} from '../../services/pushRegistration'
+import {
   colors,
 } from '../../theme/colors'
 
@@ -832,7 +835,12 @@ export default function Profile({
   async function handleLogout() {
     try {
       if (refreshToken) {
-        await authApi.logout(refreshToken)
+        const deviceId = await getInstallationDeviceId()
+
+        await authApi.logout(
+          refreshToken,
+          deviceId ?? undefined,
+        )
       }
     } catch {
       // Logout remains best effort on the server.

@@ -19,6 +19,7 @@ export interface TokenPair {
   access: string
   refresh: string
   user_id: number
+  role: string
 }
 
 export const authApi = {
@@ -51,9 +52,12 @@ export const authApi = {
       password,
     }),
 
-  logout: (refresh: string) =>
+  logout: (refresh: string, deviceId?: string) =>
     client.post<{ detail: string }>('/auth/logout/', {
       refresh,
+      ...(deviceId
+        ? { device_id: deviceId }
+        : {}),
     }),
 
   passwordChange: (

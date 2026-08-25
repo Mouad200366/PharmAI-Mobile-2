@@ -48,7 +48,12 @@ export default function VerifyOTP({ navigation, route }: Props) {
     try {
       const { data } = await authApi.verifyOTP(phone, code, purpose)
       if (purpose === 'signup') {
-        await login(data.access, data.refresh, data.user_id)
+        await login(
+          data.access,
+          data.refresh,
+          data.user_id,
+          data.role,
+        )
       } else {
         setResetTokens(data.access, data.refresh)
         navigation.navigate('ForgotPassword')

@@ -6,4 +6,16 @@ from . import views
 router = DefaultRouter()
 router.register(r'', views.NotificationViewSet, basename='notification')
 
-urlpatterns = [path('', include(router.urls))]
+urlpatterns = [
+    path(
+        'devices/register/',
+        views.UserDeviceRegisterView.as_view(),
+        name='user-device-register',
+    ),
+    path(
+        'devices/deactivate/',
+        views.UserDeviceDeactivateView.as_view(),
+        name='user-device-deactivate',
+    ),
+    path('', include(router.urls)),
+]

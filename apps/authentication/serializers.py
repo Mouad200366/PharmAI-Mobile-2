@@ -16,6 +16,7 @@ def _tokens_for(user):
         'access': str(refresh.access_token),
         'refresh': str(refresh),
         'user_id': user.id,
+        'role': user.role,
     }
 
 
@@ -110,6 +111,12 @@ class LoginSerializer(serializers.Serializer):
 
 class LogoutSerializer(serializers.Serializer):
     refresh = serializers.CharField()
+    device_id = serializers.CharField(
+        required=False,
+        allow_blank=False,
+        max_length=128,
+        trim_whitespace=True,
+    )
 
     def validate_refresh(self, value):
         try:

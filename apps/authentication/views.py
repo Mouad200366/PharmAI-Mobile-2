@@ -1,6 +1,10 @@
+from django.db import transaction
+
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from apps.notifications.services import deactivate_user_device
 
 from .serializers import (
     LoginSerializer,
@@ -63,7 +67,41 @@ class LogoutView(APIView):
     def post(self, request):
         s = LogoutSerializer(data=request.data)
         s.is_valid(raise_exception=True)
-        s.save()
+
+        if request.user.is_delivery:
+            from apps.orders.models import Order
+            from apps.orders.services.state_machine import ACTIVE_AGENT_STATUSES
+
+            has_active_delivery = (
+                Order.objects
+                .filter(
+                    delivery_agent=request.user,
+                    status__in=ACTIVE_AGENT_STATUSES,
+                )
+                .exists()
+            )
+
+            if has_active_delivery:
+                return Response(
+                    {
+                        'detail': (
+                            'You cannot log out while you have an active delivery.'
+                        ),
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        with transaction.atomic():
+            device_id = s.validated_data.get('device_id')
+
+            if device_id:
+                deactivate_user_device(
+                    user=request.user,
+                    device_id=device_id,
+                )
+
+            s.save()
+
         return Response(
             {'detail': 'Successfully logged out.'},
             status=status.HTTP_200_OK,

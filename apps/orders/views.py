@@ -200,6 +200,47 @@ class OrderViewSet(viewsets.GenericViewSet):
                 )
         return Response(PharmacyOrderSerializer(order).data)
 
+    @action(
+        detail=True,
+        methods=('post',),
+        url_path='pharmacy/pickup-verification',
+        permission_classes=(
+            permissions.IsAuthenticated,
+            IsOrderPharmacy,
+        ),
+    )
+    def pharmacy_pickup_verification(
+        self,
+        request,
+        pk=None,
+    ):
+        from apps.delivery.services.pickup import (
+            issue_pickup_verification,
+        )
+
+        order = get_object_or_404(
+            self.get_queryset(),
+            pk=pk,
+        )
+        self.check_object_permissions(
+            request,
+            order,
+        )
+
+        issued = issue_pickup_verification(
+            order=order,
+        )
+
+        return Response(
+            {
+                'order_id': order.id,
+                'qr_token': issued['qr_token'],
+                'pin': issued['pin'],
+                'expires_at': issued['expires_at'],
+            },
+            status=status.HTTP_200_OK,
+        )
+
     @action(detail=True, methods=('get',))
     def messages(self, request, pk=None):
         """`GET /api/orders/{id}/messages/` — chat history fallback for clients
@@ -230,6 +271,102 @@ class OrderViewSet(viewsets.GenericViewSet):
         terminal = (OrderStatus.DELIVERED, OrderStatus.FAILED, OrderStatus.CANCELLED)
         qs = self.get_queryset().filter(status__in=terminal).order_by('-created_at')
         return Response(AgentOrderSerializer(qs, many=True).data)
+
+    @action(
+        detail=True,
+        methods=('post',),
+        url_path='delivery/pickup/verify',
+        permission_classes=(permissions.IsAuthenticated, IsOrderDeliveryAgent),
+    )
+    def verify_pickup(self, request, pk=None):
+        from apps.delivery.pickup_serializers import (
+            PickupVerificationRequestSerializer,
+        )
+        from apps.delivery.services.pickup import verify_pickup
+
+        order = get_object_or_404(self.get_queryset(), pk=pk)
+        self.check_object_permissions(request, order)
+
+        body = PickupVerificationRequestSerializer(data=request.data)
+        body.is_valid(raise_exception=True)
+
+        verify_pickup(
+            order_id=order.id,
+            agent=request.user,
+            method=body.validated_data['method'],
+            credential=body.validated_data['credential'],
+            latitude=body.validated_data['latitude'],
+            longitude=body.validated_data['longitude'],
+        )
+
+        order.refresh_from_db()
+
+        return Response(
+            AgentOrderSerializer(order).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @action(
+        detail=True,
+        methods=('post',),
+        url_path='delivery/start',
+        permission_classes=(permissions.IsAuthenticated, IsOrderDeliveryAgent),
+    )
+    def start_delivery(self, request, pk=None):
+        from apps.delivery.services.start_delivery import (
+            start_delivery as start_delivery_service,
+        )
+
+        order = get_object_or_404(self.get_queryset(), pk=pk)
+        self.check_object_permissions(request, order)
+
+        order = start_delivery_service(
+            order_id=order.id,
+            agent=request.user,
+        )
+
+        order.refresh_from_db()
+
+        return Response(
+            AgentOrderSerializer(order).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @action(
+        detail=True,
+        methods=('post',),
+        url_path='delivery/complete',
+        permission_classes=(permissions.IsAuthenticated, IsOrderDeliveryAgent),
+    )
+    def complete_delivery(self, request, pk=None):
+        from apps.delivery.delivery_completion_serializers import (
+            DeliveryCompletionRequestSerializer,
+        )
+        from apps.delivery.services.delivery_proof import (
+            complete_delivery as complete_delivery_service,
+        )
+
+        order = get_object_or_404(self.get_queryset(), pk=pk)
+        self.check_object_permissions(request, order)
+
+        serializer = DeliveryCompletionRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        order = complete_delivery_service(
+            order_id=order.id,
+            agent=request.user,
+            pin=serializer.validated_data['pin'],
+            latitude=serializer.validated_data['latitude'],
+            longitude=serializer.validated_data['longitude'],
+            cash_confirmed=serializer.validated_data['cash_confirmed'],
+        )
+
+        order.refresh_from_db()
+
+        return Response(
+            AgentOrderSerializer(order).data,
+            status=status.HTTP_200_OK,
+        )
 
     @action(
         detail=True, methods=('post',), url_path='advance_status',

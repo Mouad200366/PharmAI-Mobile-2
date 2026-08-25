@@ -1,10 +1,17 @@
+from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib.gis.geos import Point
 from django.db import transaction
+from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from apps.catalog.models import Medicine
+from apps.delivery.models import DeliveryOffer, DeliveryOfferStatus
+from apps.notifications.constants import NotificationType
+from apps.notifications.models import Notification
+from apps.notifications.services import send_push_to_user
+from apps.tracking.services.broadcast import broadcast_delivery_offer_available
 
 from ..constants import OrderStatus, PaymentMethod, PrescriptionMode, PrescriptionStatus
 from ..models import Order, OrderItem, OrderStatusHistory, Prescription
@@ -12,8 +19,9 @@ from .agent_selection import select_agent_for_order
 from .pharmacy_selection import select_pharmacy_for_order
 from .stock import decrement_stock
 
-# Flat MVP delivery fee — replace with distance-based pricing later.
 DELIVERY_FEE = Decimal('15.00')
+DELIVERY_AGENT_EARNING = Decimal('15.00')
+DELIVERY_OFFER_TTL_SECONDS = 60
 
 
 @transaction.atomic
@@ -29,56 +37,74 @@ def place_order(
     prescription_photo=None,
     notes: str = '',
 ):
-    """Place an order end-to-end.
-
-    Steps:
-    1. Validate items and prescription requirements.
-    2. Pick the nearest open pharmacy that stocks everything.
-    3. Lock + decrement stock; snapshot prices.
-    4. Create Order + OrderItems + Prescription.
-    5. If status is ACCEPTED, try to assign an agent (best-effort).
-
-    Raises ValidationError on any failure; the @transaction.atomic block
-    rolls back stock changes automatically.
-    """
     if not items:
         raise ValidationError({'items': 'At least one item is required.'})
 
     delivery_location = Point(longitude, latitude, srid=4326)
 
-    # --- Validate medicines + Rx logic ---
     medicine_ids = [item['medicine'] for item in items]
     medicines = {
-        m.id: m for m in Medicine.objects.filter(id__in=medicine_ids, is_active=True)
+        m.id: m
+        for m in Medicine.objects.filter(
+            id__in=medicine_ids,
+            is_active=True,
+        )
     }
-    if len(medicines) != len(set(medicine_ids)):
-        raise ValidationError({'items': 'One or more medicines are unknown or inactive.'})
 
-    rx_required = any(m.requires_prescription for m in medicines.values())
+    if len(medicines) != len(set(medicine_ids)):
+        raise ValidationError(
+            {'items': 'One or more medicines are unknown or inactive.'},
+        )
+
+    rx_required = any(
+        medicine.requires_prescription
+        for medicine in medicines.values()
+    )
+
     if rx_required and prescription_mode == PrescriptionMode.NONE:
         raise ValidationError(
-            {'prescription_mode': 'Prescription required for one or more items.'},
-        )
-    if prescription_mode == PrescriptionMode.PHOTO and not prescription_photo:
-        raise ValidationError(
-            {'prescription_photo': 'A photo is required when prescription_mode=photo.'},
+            {
+                'prescription_mode':
+                    'Prescription required for one or more items.'
+            },
         )
 
-    # --- Pick pharmacy ---
-    pharmacy = select_pharmacy_for_order(items, delivery_location)
+    if (
+        prescription_mode == PrescriptionMode.PHOTO
+        and not prescription_photo
+    ):
+        raise ValidationError(
+            {
+                'prescription_photo':
+                    'A photo is required when prescription_mode=photo.'
+            },
+        )
+
+    pharmacy = select_pharmacy_for_order(
+        items,
+        delivery_location,
+    )
+
     if pharmacy is None:
         raise ValidationError(
             'No pharmacy in your area can fulfill this order right now.',
         )
 
-    # --- Lock stock + snapshot prices ---
-    locked = decrement_stock(pharmacy, items)
-    items_total = sum((price * qty for _, qty, price in locked), Decimal('0'))
+    locked = decrement_stock(
+        pharmacy,
+        items,
+    )
+
+    items_total = sum(
+        (
+            price * quantity
+            for _, quantity, price in locked
+        ),
+        Decimal('0'),
+    )
+
     grand_total = items_total + DELIVERY_FEE
 
-    # --- Initial status ---
-    # Card orders wait for the Stripe webhook to mark payment paid before the
-    # pharmacy is notified. Cash orders proceed straight into the normal flow.
     if payment_method == PaymentMethod.CARD:
         initial_status = OrderStatus.PENDING_PAYMENT
     elif prescription_mode == PrescriptionMode.PHOTO:
@@ -100,8 +126,6 @@ def place_order(
         notes=notes,
     )
 
-    # Record the first real timeline event as part of the same transaction.
-    # If a later step fails, both the order and this history entry roll back.
     OrderStatusHistory.objects.create(
         order=order,
         status=initial_status,
@@ -109,9 +133,12 @@ def place_order(
         note='Order created.',
     )
 
-    for stock, qty, price in locked:
+    for stock, quantity, price in locked:
         OrderItem.objects.create(
-            order=order, medicine=stock.medicine, quantity=qty, unit_price=price,
+            order=order,
+            medicine=stock.medicine,
+            quantity=quantity,
+            unit_price=price,
         )
 
     if prescription_mode == PrescriptionMode.PHOTO:
@@ -126,10 +153,9 @@ def place_order(
             status=PrescriptionStatus.COLLECTED,
         )
 
-    # --- Create the matching Payment record ---
-    # Lazy import — payments app depends on orders, not the other way around.
     from apps.payments.constants import PaymentProvider, PaymentStatus
     from apps.payments.models import Payment
+
     Payment.objects.create(
         order=order,
         provider=PaymentProvider(payment_method),
@@ -137,15 +163,137 @@ def place_order(
         status=PaymentStatus.PENDING,
     )
 
-    # --- Best-effort agent assignment for cash orders that are immediately ACCEPTED ---
-    if order.status == OrderStatus.ACCEPTED:
-        _try_assign_agent(order)
-
     return order
 
 
+def _create_delivery_offer_notification(*, agent_id, offer_id, order_id):
+    """Persist one courier offer in the in-app notification inbox."""
+    Notification.objects.create(
+        user_id=agent_id,
+        type=NotificationType.DELIVERY_OFFER_AVAILABLE,
+        title='Nouvelle livraison disponible',
+        body=(
+            'Une nouvelle demande de livraison est disponible. '
+            'Ouvrez PharmAI pour la consulter.'
+        ),
+        payload={
+            'type': 'delivery_offer_available',
+            'offer_id': offer_id,
+            'order_id': order_id,
+        },
+    )
+
+
 def _try_assign_agent(order):
-    agent = select_agent_for_order(order.pharmacy.location)
-    if agent is not None:
-        order.delivery_agent = agent
-        order.save(update_fields=('delivery_agent', 'updated_at'))
+    if (
+        order.status != OrderStatus.AWAITING_AGENT
+        or order.delivery_agent_id is not None
+        or order.pharmacy_id is None
+    ):
+        return None
+
+    now = timezone.now()
+
+    with transaction.atomic():
+        locked_order = (
+            Order.objects
+            .select_for_update()
+            .get(pk=order.pk)
+        )
+
+        if (
+            locked_order.status != OrderStatus.AWAITING_AGENT
+            or locked_order.delivery_agent_id is not None
+            or locked_order.pharmacy_id is None
+        ):
+            return None
+
+        pending_offer = (
+            DeliveryOffer.objects
+            .select_for_update()
+            .filter(
+                order=locked_order,
+                status=DeliveryOfferStatus.PENDING,
+            )
+            .first()
+        )
+
+        if pending_offer is not None:
+            if pending_offer.expires_at > now:
+                return pending_offer
+
+            pending_offer.status = DeliveryOfferStatus.EXPIRED
+            pending_offer.responded_at = now
+            pending_offer.save(
+                update_fields=(
+                    'status',
+                    'responded_at',
+                    'updated_at',
+                )
+            )
+
+        previously_offered_agent_ids = (
+            DeliveryOffer.objects
+            .filter(order=locked_order)
+            .values_list('agent_id', flat=True)
+            .distinct()
+        )
+
+        agent = select_agent_for_order(
+            locked_order.pharmacy.location,
+            exclude_agent_ids=previously_offered_agent_ids,
+        )
+
+        if agent is None:
+            return None
+
+        offer = DeliveryOffer.objects.create(
+            order=locked_order,
+            agent=agent,
+            expires_at=(
+                now
+                + timedelta(
+                    seconds=DELIVERY_OFFER_TTL_SECONDS,
+                )
+            ),
+            earning_amount=DELIVERY_AGENT_EARNING,
+        )
+
+        transaction.on_commit(
+            lambda agent_id=agent.id, offer_id=offer.id, order_id=locked_order.id:
+                _create_delivery_offer_notification(
+                    agent_id=agent_id,
+                    offer_id=offer_id,
+                    order_id=order_id,
+                ),
+            robust=True,
+        )
+
+        transaction.on_commit(
+            lambda agent=agent, offer_id=offer.id, order_id=locked_order.id:
+                send_push_to_user(
+                    user=agent,
+                    title='New delivery offer',
+                    body=(
+                        'A new delivery request is available. '
+                        'Open PharmAI to review it.'
+                    ),
+                    data={
+                        'type': 'delivery_offer_available',
+                        'offer_id': offer_id,
+                        'order_id': order_id,
+                    },
+                    priority='high',
+                ),
+            robust=True,
+        )
+
+        transaction.on_commit(
+            lambda agent_id=agent.id, offer_id=offer.id:
+                broadcast_delivery_offer_available(
+                    agent_id=agent_id,
+                    offer_id=offer_id,
+                )
+        )
+
+        return offer

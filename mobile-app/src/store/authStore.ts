@@ -12,6 +12,7 @@ interface AuthState {
   accessToken: string | null
   refreshToken: string | null
   userId: number | null
+  role: string | null
   isAuthenticated: boolean
   hasHydrated: boolean
   pendingPhone: string | null
@@ -20,7 +21,12 @@ interface AuthState {
 
   hydrate: () => Promise<void>
   setPendingPhone: (phone: string) => void
-  login: (access: string, refresh: string, userId: number) => Promise<void>
+  login: (
+    access: string,
+    refresh: string,
+    userId: number,
+    role: string,
+  ) => Promise<void>
   logout: () => void
   setResetTokens: (access: string, refresh: string) => void
   clearResetTokens: () => void
@@ -30,6 +36,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   accessToken: null,
   refreshToken: null,
   userId: null,
+  role: null,
   isAuthenticated: false,
   hasHydrated: false,
   pendingPhone: null,
@@ -37,15 +44,17 @@ export const useAuthStore = create<AuthState>((set) => ({
   resetRefresh: null,
 
   hydrate: async () => {
-    const [accessToken, refreshToken, userId] = await Promise.all([
+    const [accessToken, refreshToken, userId, role] = await Promise.all([
       tokenStorage.getAccessToken(),
       tokenStorage.getRefreshToken(),
       tokenStorage.getUserId(),
+      tokenStorage.getRole(),
     ])
     set({
       accessToken,
       refreshToken,
       userId,
+      role,
       isAuthenticated: !!accessToken,
       hasHydrated: true,
     })
@@ -55,12 +64,18 @@ export const useAuthStore = create<AuthState>((set) => ({
   setResetTokens: (access, refresh) => set({ resetAccess: access, resetRefresh: refresh }),
   clearResetTokens: () => set({ resetAccess: null, resetRefresh: null }),
 
-  login: async (access, refresh, userId) => {
-    await tokenStorage.setTokens(access, refresh, userId)
+  login: async (access, refresh, userId, role) => {
+    await tokenStorage.setTokens(
+      access,
+      refresh,
+      userId,
+      role,
+    )
     set({
       accessToken: access,
       refreshToken: refresh,
       userId,
+      role,
       isAuthenticated: true,
       pendingPhone: null,
     })
@@ -72,6 +87,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       accessToken: null,
       refreshToken: null,
       userId: null,
+      role: null,
       isAuthenticated: false,
       pendingPhone: null,
     })

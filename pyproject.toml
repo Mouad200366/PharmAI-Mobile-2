@@ -13,3 +13,4 @@ known-first-party = ["apps", "config"]
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings.testing"
+norecursedirs = ["eas-archive-inspect"]

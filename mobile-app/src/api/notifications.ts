@@ -10,6 +10,7 @@ export type NotificationType =
   | 'payment_succeeded'
   | 'payment_failed'
   | 'agent_assigned'
+  | 'delivery_offer_available'
 
 export interface NotificationPayload {
   order_id?: number | string
@@ -51,6 +52,34 @@ export interface UnreadCountResponse {
   unread_count: number
 }
 
+export type DevicePlatform = 'android' | 'ios'
+
+export interface UserDeviceRegistrationPayload {
+  device_id: string
+  platform: DevicePlatform
+  push_token?: string | null
+  app_version?: string
+  is_primary?: boolean
+}
+
+export interface UserDevice {
+  id: number
+  user_id: number
+  device_id: string
+  platform: DevicePlatform
+  push_token: string | null
+  app_version: string
+  is_active: boolean
+  is_primary: boolean
+  last_seen_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface UserDeviceDeactivationPayload {
+  device_id: string
+}
+
 export function getNotificationOrderId(
   notification: Notification,
 ): number | null {
@@ -85,4 +114,16 @@ export const notificationsApi = {
 
   unreadCount: () =>
     client.get<UnreadCountResponse>('/notifications/unread_count/'),
+
+  registerDevice: (data: UserDeviceRegistrationPayload) =>
+    client.post<UserDevice>(
+      '/notifications/devices/register/',
+      data,
+    ),
+
+  deactivateDevice: (data: UserDeviceDeactivationPayload) =>
+    client.post<UserDevice>(
+      '/notifications/devices/deactivate/',
+      data,
+    ),
 }

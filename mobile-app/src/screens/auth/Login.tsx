@@ -55,7 +55,12 @@ export default function Login({ navigation }: Props) {
     try {
       const fullPhone = `+212${phone}`
       const { data } = await authApi.login(fullPhone, password)
-      await login(data.access, data.refresh, data.user_id)
+      await login(
+        data.access,
+        data.refresh,
+        data.user_id,
+        data.role,
+      )
     } catch (err: unknown) {
       setError(firstError(err))
     } finally {

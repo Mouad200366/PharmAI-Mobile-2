@@ -37,7 +37,8 @@ TRANSITIONS: dict[str, set[str]] = {
     },
     OrderStatus.PICKED_UP: {
         OrderStatus.OUT_FOR_DELIVERY,
-    },
+        OrderStatus.FAILED,
+},
     OrderStatus.OUT_FOR_DELIVERY: {
         OrderStatus.DELIVERED,
         OrderStatus.FAILED,

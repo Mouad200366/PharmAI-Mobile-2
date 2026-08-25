@@ -234,6 +234,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.delivery.tasks.mark_stale_agents_offline',
         'schedule': 60.0,  # every minute
     },
+    'expire-stale-delivery-offers': {
+        'task': 'apps.delivery.tasks.expire_stale_delivery_offers',
+        'schedule': 5.0,  # keep 20-second delivery offers responsive
+    },
     'retry-stuck-orders': {
         'task': 'apps.orders.tasks.retry_stuck_orders',
         'schedule': 30.0,  # every 30 seconds

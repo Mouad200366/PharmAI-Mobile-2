@@ -2,9 +2,19 @@ from django.utils import timezone
 from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from .models import Notification
-from .serializers import NotificationSerializer
+from .serializers import (
+    NotificationSerializer,
+    UserDeviceDeactivationSerializer,
+    UserDeviceRegistrationSerializer,
+    UserDeviceSerializer,
+)
+from .services import (
+    deactivate_user_device,
+    register_user_device,
+)
 
 
 class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
@@ -44,3 +54,46 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     def unread_count(self, request):
         count = self.get_queryset().filter(read_at__isnull=True).count()
         return Response({'unread_count': count})
+
+
+class UserDeviceRegisterView(APIView):
+    """Register or refresh the authenticated user's mobile installation."""
+
+    permission_classes = (permissions.IsAuthenticated,)
+
+    def post(self, request):
+        serializer = UserDeviceRegistrationSerializer(
+            data=request.data,
+        )
+        serializer.is_valid(raise_exception=True)
+
+        device = register_user_device(
+            user=request.user,
+            **serializer.validated_data,
+        )
+
+        return Response(
+            UserDeviceSerializer(device).data,
+        )
+
+
+class UserDeviceDeactivateView(APIView):
+    """Deactivate one mobile installation owned by the authenticated user."""
+
+    permission_classes = (permissions.IsAuthenticated,)
+
+    def post(self, request):
+        serializer = UserDeviceDeactivationSerializer(
+            data=request.data,
+        )
+        serializer.is_valid(raise_exception=True)
+
+        device = deactivate_user_device(
+            user=request.user,
+            device_id=serializer.validated_data['device_id'],
+        )
+
+        return Response(
+            UserDeviceSerializer(device).data,
+        )
+

@@ -12,3 +12,4 @@ class NotificationType(models.TextChoices):
     PAYMENT_SUCCEEDED = 'payment_succeeded', _('Payment succeeded')
     PAYMENT_FAILED = 'payment_failed', _('Payment failed')
     AGENT_ASSIGNED = 'agent_assigned', _('Delivery agent assigned')
+    DELIVERY_OFFER_AVAILABLE = 'delivery_offer_available', _('Delivery offer available')

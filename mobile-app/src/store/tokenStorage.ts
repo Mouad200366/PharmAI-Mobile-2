@@ -4,6 +4,7 @@ import * as SecureStore from 'expo-secure-store'
 const ACCESS_KEY = 'pharmaai_access_token'
 const REFRESH_KEY = 'pharmaai_refresh_token'
 const USER_ID_KEY = 'pharmaai_user_id'
+const ROLE_KEY = 'pharmaai_user_role'
 
 function getWebItem(key: string) {
   if (typeof window === 'undefined') {
@@ -81,10 +82,21 @@ export const tokenStorage = {
       : parsedValue
   },
 
+  async getRole() {
+    if (Platform.OS === 'web') {
+      return getWebItem(ROLE_KEY)
+    }
+
+    return SecureStore.getItemAsync(
+      ROLE_KEY,
+    )
+  },
+
   async setTokens(
     access: string,
     refresh: string,
     userId: number,
+    role?: string,
   ) {
     if (Platform.OS === 'web') {
       setWebItem(ACCESS_KEY, access)
@@ -93,6 +105,13 @@ export const tokenStorage = {
         USER_ID_KEY,
         String(userId),
       )
+
+      if (role) {
+        setWebItem(
+          ROLE_KEY,
+          role,
+        )
+      }
 
       return
     }
@@ -112,6 +131,15 @@ export const tokenStorage = {
         USER_ID_KEY,
         String(userId),
       ),
+
+      ...(role
+        ? [
+            SecureStore.setItemAsync(
+              ROLE_KEY,
+              role,
+            ),
+          ]
+        : []),
     ])
   },
 
@@ -134,6 +162,7 @@ export const tokenStorage = {
       removeWebItem(ACCESS_KEY)
       removeWebItem(REFRESH_KEY)
       removeWebItem(USER_ID_KEY)
+      removeWebItem(ROLE_KEY)
 
       return
     }
@@ -149,6 +178,10 @@ export const tokenStorage = {
 
       SecureStore.deleteItemAsync(
         USER_ID_KEY,
+      ),
+
+      SecureStore.deleteItemAsync(
+        ROLE_KEY,
       ),
     ])
   },

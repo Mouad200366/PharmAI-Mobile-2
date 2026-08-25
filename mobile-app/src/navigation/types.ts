@@ -24,6 +24,14 @@ export type AppTabParamList = {
   Profile: undefined
 }
 
+export type DeliveryTabParamList = {
+  Home: undefined
+  Deliveries: undefined
+  Earnings: undefined
+  Notifications: undefined
+  Profile: undefined
+}
+
 // Screens pushed on top of the tab bar (web equivalents: /cart, /checkout,
 // /orders/:id, /addresses — reachable from within the dashboard layout but
 // not part of the primary nav).
@@ -34,6 +42,10 @@ export type MainStackParamList = {
   Checkout: undefined
   OrderDetail: { id: number }
   Addresses: undefined
+}
+
+export type DeliveryMainStackParamList = {
+  Tabs: NavigatorScreenParams<DeliveryTabParamList>
 }
 
 export type RootStackParamList = {
