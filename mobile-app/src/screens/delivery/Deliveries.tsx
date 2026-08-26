@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Pressable,
@@ -8,7 +8,10 @@ import {
   Text,
   View,
 } from 'react-native'
+import { LinearGradient } from 'expo-linear-gradient'
+import { StatusBar } from 'expo-status-bar'
 import { useFocusEffect } from '@react-navigation/native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import Icon from '../../components/ui/Icon'
 import {
@@ -16,16 +19,38 @@ import {
   type DeliveryOrder,
 } from '../../api/delivery'
 import { firstError } from '../../api/errors'
-import { colors } from '../../theme/colors'
+
+const brand = {
+  navy: '#0B1B63',
+  blue: '#0D4EEB',
+  blueBright: '#168BEE',
+  cyan: '#18C7D9',
+  cyanSoft: '#E8FAFC',
+  blueSoft: '#EEF5FF',
+  surface: '#F7FAFF',
+  white: '#FFFFFF',
+  text: '#0C1C4C',
+  textSecondary: '#667085',
+  textMuted: '#98A2B3',
+  border: '#E7EDF7',
+  success: '#15803D',
+  successBg: '#EAF8EF',
+  danger: '#C2413A',
+  dangerBg: '#FFF0EF',
+  neutralBg: '#F1F4F8',
+} as const
+
+const ACTIVE_ORDER_REFRESH_INTERVAL_MS = 5_000
+const HISTORY_REFRESH_INTERVAL_MS = 30_000
 
 function orderStatusLabel(status: string) {
   switch (status) {
     case 'awaiting_agent':
-      return 'En attente du livreur'
+      return 'Vers la pharmacie'
     case 'picked_up':
       return 'Colis récupéré'
     case 'out_for_delivery':
-      return 'En cours de livraison'
+      return 'En livraison'
     case 'delivered':
       return 'Livrée'
     case 'failed':
@@ -35,6 +60,10 @@ function orderStatusLabel(status: string) {
     default:
       return status.replaceAll('_', ' ')
   }
+}
+
+function paymentLabel(method: string) {
+  return method === 'cash' ? 'Espèces' : 'Carte'
 }
 
 function formatDate(value: string) {
@@ -53,46 +82,138 @@ function formatDate(value: string) {
   return `${day}/${month}/${year} · ${hours}:${minutes}`
 }
 
-function statusIcon(status: string) {
+function orderTimestamp(order: DeliveryOrder) {
+  const parsed = new Date(
+    order.updated_at || order.created_at,
+  ).getTime()
+
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function sortDeliveryHistory(
+  orders: DeliveryOrder[],
+) {
+  return [...orders].sort((left, right) => {
+    const timeDifference =
+      orderTimestamp(right) - orderTimestamp(left)
+
+    if (timeDifference !== 0) {
+      return timeDifference
+    }
+
+    return right.id - left.id
+  })
+}
+
+function statusVisual(status: string) {
   switch (status) {
     case 'delivered':
-      return 'check_circle'
+      return {
+        icon: 'check',
+        iconBackground: brand.blueSoft,
+        iconColor: brand.blue,
+        badgeBackground: brand.successBg,
+        badgeColor: brand.success,
+      }
     case 'failed':
-      return 'error'
+      return {
+        icon: 'error',
+        iconBackground: brand.dangerBg,
+        iconColor: brand.danger,
+        badgeBackground: brand.dangerBg,
+        badgeColor: brand.danger,
+      }
     case 'cancelled':
-      return 'cancel'
+      return {
+        icon: 'close',
+        iconBackground: brand.neutralBg,
+        iconColor: brand.textSecondary,
+        badgeBackground: brand.neutralBg,
+        badgeColor: brand.textSecondary,
+      }
     case 'out_for_delivery':
-      return 'delivery_dining'
+      return {
+        icon: 'delivery_dining',
+        iconBackground: brand.blueSoft,
+        iconColor: brand.blue,
+        badgeBackground: brand.blueSoft,
+        badgeColor: brand.blue,
+      }
     case 'picked_up':
-      return 'inventory_2'
+      return {
+        icon: 'inventory_2',
+        iconBackground: brand.cyanSoft,
+        iconColor: '#07889B',
+        badgeBackground: brand.cyanSoft,
+        badgeColor: '#087C8C',
+      }
     default:
-      return 'local_shipping'
+      return {
+        icon: 'local_shipping',
+        iconBackground: brand.blueSoft,
+        iconColor: brand.blue,
+        badgeBackground: brand.blueSoft,
+        badgeColor: brand.blue,
+      }
   }
 }
 
-interface OrderCardProps {
+interface StatusBadgeProps {
+  status: string
+}
+
+function StatusBadge({ status }: StatusBadgeProps) {
+  const visual = statusVisual(status)
+
+  return (
+    <View
+      style={[
+        styles.statusBadge,
+        { backgroundColor: visual.badgeBackground },
+      ]}
+    >
+      <Text
+        style={[
+          styles.statusBadgeText,
+          { color: visual.badgeColor },
+        ]}
+      >
+        {orderStatusLabel(status)}
+      </Text>
+    </View>
+  )
+}
+
+interface DetailedOrderCardProps {
   order: DeliveryOrder
   active?: boolean
 }
 
-function OrderCard({
+function DetailedOrderCard({
   order,
   active = false,
-}: OrderCardProps) {
+}: DetailedOrderCardProps) {
+  const visual = statusVisual(order.status)
+
   return (
     <View
       style={[
-        styles.orderCard,
-        active && styles.activeOrderCard,
+        styles.detailedCard,
+        active && styles.activeDetailedCard,
       ]}
     >
       <View style={styles.orderHeader}>
         <View style={styles.orderIdentity}>
-          <View style={styles.orderIcon}>
+          <View
+            style={[
+              styles.orderIconCircle,
+              { backgroundColor: visual.iconBackground },
+            ]}
+          >
             <Icon
-              name={statusIcon(order.status)}
+              name={visual.icon}
               size={22}
-              color={colors.primary}
+              color={visual.iconColor}
             />
           </View>
 
@@ -100,26 +221,31 @@ function OrderCard({
             <Text style={styles.orderEyebrow}>
               Commande #{order.id}
             </Text>
-            <Text style={styles.orderPharmacy}>
+            <Text
+              style={styles.orderPharmacy}
+              numberOfLines={1}
+            >
               {order.pharmacy_name}
             </Text>
           </View>
         </View>
 
-        <View style={styles.statusBadge}>
-          <Text style={styles.statusBadgeText}>
-            {orderStatusLabel(order.status)}
-          </Text>
-        </View>
+        <StatusBadge status={order.status} />
       </View>
 
-      <View style={styles.routeRow}>
-        <Icon
-          name="local_pharmacy"
-          size={18}
-          color={colors.primary}
-        />
-        <View style={styles.routeText}>
+      <View style={styles.routeBlock}>
+        <View style={styles.routeIconColumn}>
+          <View style={styles.routeIconCircle}>
+            <Icon
+              name="local_pharmacy"
+              size={19}
+              color={brand.blue}
+            />
+          </View>
+          <View style={styles.routeConnector} />
+        </View>
+
+        <View style={styles.routeTextColumn}>
           <Text style={styles.routeLabel}>
             Pharmacie
           </Text>
@@ -129,15 +255,18 @@ function OrderCard({
         </View>
       </View>
 
-      <View style={styles.routeConnector} />
+      <View style={styles.routeBlock}>
+        <View style={styles.routeIconColumn}>
+          <View style={styles.destinationIconCircle}>
+            <Icon
+              name="location_on"
+              size={19}
+              color="#087C8C"
+            />
+          </View>
+        </View>
 
-      <View style={styles.routeRow}>
-        <Icon
-          name="location_on"
-          size={18}
-          color={colors.secondary}
-        />
-        <View style={styles.routeText}>
+        <View style={styles.routeTextColumn}>
           <Text style={styles.routeLabel}>
             Destination
           </Text>
@@ -147,25 +276,43 @@ function OrderCard({
         </View>
       </View>
 
-      <View style={styles.metaGrid}>
-        <View style={styles.metaBox}>
-          <Text style={styles.metaLabel}>
-            Paiement
-          </Text>
-          <Text style={styles.metaValue}>
-            {order.payment_method === 'cash'
-              ? 'Espèces'
-              : 'Carte'}
-          </Text>
+      <View style={styles.metaRow}>
+        <View style={styles.metaCard}>
+          <View style={styles.metaIcon}>
+            <Icon
+              name="account_balance_wallet"
+              size={17}
+              color={brand.blue}
+            />
+          </View>
+          <View style={styles.metaText}>
+            <Text style={styles.metaLabel}>
+              Paiement
+            </Text>
+            <Text style={styles.metaValue}>
+              {paymentLabel(order.payment_method)}
+            </Text>
+          </View>
         </View>
 
-        <View style={styles.metaBox}>
-          <Text style={styles.metaLabel}>
-            Total
-          </Text>
-          <Text style={styles.metaValue}>
-            {order.grand_total} MAD
-          </Text>
+        <View style={styles.metaCard}>
+          <View style={styles.metaIcon}>
+            <Icon
+              name="payments"
+              size={18}
+              color={brand.blue}
+            />
+          </View>
+          <View style={styles.metaText}>
+            <Text style={styles.metaLabel}>
+              Total
+            </Text>
+            <Text style={styles.metaValue}>
+              {Number.isFinite(Number(order.grand_total))
+                ? Number(order.grand_total).toFixed(2)
+                : order.grand_total} MAD
+            </Text>
+          </View>
         </View>
       </View>
 
@@ -176,13 +323,136 @@ function OrderCard({
   )
 }
 
+interface CompactOrderCardProps {
+  order: DeliveryOrder
+}
+
+function CompactOrderCard({
+  order,
+}: CompactOrderCardProps) {
+  const visual = statusVisual(order.status)
+
+  return (
+    <View style={styles.compactCard}>
+      <View style={styles.compactTopRow}>
+        <View
+          style={[
+            styles.compactIcon,
+            { backgroundColor: visual.iconBackground },
+          ]}
+        >
+          <Icon
+            name={visual.icon}
+            size={20}
+            color={visual.iconColor}
+          />
+        </View>
+
+        <View style={styles.compactIdentity}>
+          <Text style={styles.compactEyebrow}>
+            Commande #{order.id}
+          </Text>
+          <Text
+            style={styles.compactPharmacy}
+            numberOfLines={1}
+          >
+            {order.pharmacy_name}
+          </Text>
+        </View>
+
+        <StatusBadge status={order.status} />
+      </View>
+
+      <View style={styles.compactMetaRow}>
+        <View style={styles.compactMetaItem}>
+          <Icon
+            name="event"
+            size={16}
+            color={brand.textSecondary}
+          />
+          <Text
+            style={styles.compactMetaText}
+            numberOfLines={1}
+          >
+            {formatDate(order.updated_at || order.created_at)}
+          </Text>
+        </View>
+
+        <View style={styles.compactMetaDivider} />
+
+        <View style={styles.compactMetaItem}>
+          <Icon
+            name="account_balance_wallet"
+            size={16}
+            color={brand.textSecondary}
+          />
+          <Text style={styles.compactMetaText}>
+            {paymentLabel(order.payment_method)}
+          </Text>
+        </View>
+
+        <View style={styles.compactMetaDivider} />
+
+        <View style={styles.compactMetaItem}>
+          <Icon
+            name="payments"
+            size={16}
+            color={brand.textSecondary}
+          />
+          <Text style={styles.compactMetaText}>
+            {Number.isFinite(Number(order.grand_total))
+                ? Number(order.grand_total).toFixed(2)
+                : order.grand_total} MAD
+          </Text>
+        </View>
+      </View>
+    </View>
+  )
+}
+
 export default function DeliveryDeliveries() {
+  const insets = useSafeAreaInsets()
+
   const [activeOrder, setActiveOrder] =
     useState<DeliveryOrder | null>(null)
   const [history, setHistory] = useState<DeliveryOrder[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
+
+  const activeOrderRef = useRef<DeliveryOrder | null>(null)
+
+  const refreshHistorySilently = useCallback(async () => {
+    try {
+      const response = await deliveryApi.deliveryHistory()
+
+      setHistory(
+        sortDeliveryHistory(response.data),
+      )
+    } catch {
+      // Keep the last known history during background refresh failures.
+    }
+  }, [])
+
+  const refreshActiveOrderSilently = useCallback(async () => {
+    try {
+      const response = await deliveryApi.activeOrder()
+      const previousOrder = activeOrderRef.current
+      const nextOrder = response.data
+
+      activeOrderRef.current = nextOrder
+      setActiveOrder(nextOrder)
+
+      // When an active delivery disappears after a successful refresh,
+      // it has normally moved to terminal history. Refresh that history
+      // immediately instead of waiting for the 30-second history poll.
+      if (previousOrder !== null && nextOrder === null) {
+        void refreshHistorySilently()
+      }
+    } catch {
+      // Keep the last known active order during temporary polling errors.
+    }
+  }, [refreshHistorySilently])
 
   const loadDeliveries = useCallback(async (
     isRefresh = false,
@@ -197,17 +467,39 @@ export default function DeliveryDeliveries() {
 
     try {
       const [
-        activeResponse,
-        historyResponse,
-      ] = await Promise.all([
+        activeResult,
+        historyResult,
+      ] = await Promise.allSettled([
         deliveryApi.activeOrder(),
         deliveryApi.deliveryHistory(),
       ])
 
-      setActiveOrder(activeResponse.data)
-      setHistory(historyResponse.data)
-    } catch (err: unknown) {
-      setError(firstError(err))
+      const errors: string[] = []
+
+      if (activeResult.status === 'fulfilled') {
+        activeOrderRef.current = activeResult.value.data
+        setActiveOrder(activeResult.value.data)
+      } else {
+        errors.push(
+          firstError(activeResult.reason)
+          || 'Impossible d’actualiser la livraison active.',
+        )
+      }
+
+      if (historyResult.status === 'fulfilled') {
+        setHistory(
+          sortDeliveryHistory(historyResult.value.data),
+        )
+      } else {
+        errors.push(
+          firstError(historyResult.reason)
+          || 'Impossible d’actualiser l’historique.',
+        )
+      }
+
+      if (errors.length > 0) {
+        setError(errors.join(' '))
+      }
     } finally {
       setLoading(false)
       setRefreshing(false)
@@ -217,15 +509,46 @@ export default function DeliveryDeliveries() {
   useFocusEffect(
     useCallback(() => {
       void loadDeliveries()
-    }, [loadDeliveries]),
+
+      const activeOrderInterval = setInterval(() => {
+        void refreshActiveOrderSilently()
+      }, ACTIVE_ORDER_REFRESH_INTERVAL_MS)
+
+      const historyInterval = setInterval(() => {
+        void refreshHistorySilently()
+      }, HISTORY_REFRESH_INTERVAL_MS)
+
+      return () => {
+        clearInterval(activeOrderInterval)
+        clearInterval(historyInterval)
+      }
+    }, [
+      loadDeliveries,
+      refreshActiveOrderSilently,
+      refreshHistorySilently,
+    ]),
   )
 
-  if (loading && history.length === 0 && activeOrder === null) {
+  if (
+    loading
+    && history.length === 0
+    && activeOrder === null
+  ) {
     return (
       <View style={styles.centerState}>
+        <StatusBar style="light" />
+
+        <View
+          pointerEvents="none"
+          style={[
+            styles.statusBarGuard,
+            { height: insets.top },
+          ]}
+        />
+
         <ActivityIndicator
           size="large"
-          color={colors.primary}
+          color={brand.blue}
         />
         <Text style={styles.centerStateText}>
           Chargement de vos livraisons…
@@ -234,22 +557,49 @@ export default function DeliveryDeliveries() {
     )
   }
 
+  const firstHistoryItem = history[0] ?? null
+  const compactHistory = history.slice(1)
+
   return (
-    <ScrollView
-      style={styles.screen}
-      contentContainerStyle={styles.content}
-      showsVerticalScrollIndicator={false}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={() => {
-            void loadDeliveries(true)
-          }}
-        />
-      }
-    >
-      <View style={styles.header}>
-        <View>
+    <View style={styles.root}>
+      <StatusBar style="light" />
+
+      <View
+        pointerEvents="none"
+        style={[
+          styles.statusBarGuard,
+          { height: insets.top },
+        ]}
+      />
+
+      <ScrollView
+        style={styles.screen}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              void loadDeliveries(true)
+            }}
+            tintColor={brand.blue}
+            colors={[brand.blue]}
+          />
+        }
+      >
+      <LinearGradient
+        colors={[
+          brand.navy,
+          brand.blue,
+          brand.blueBright,
+          brand.cyan,
+        ]}
+        locations={[0, 0.35, 0.72, 1]}
+        start={{ x: 0, y: 0.1 }}
+        end={{ x: 1, y: 0.9 }}
+        style={styles.hero}
+      >
+        <View style={styles.heroText}>
           <Text style={styles.eyebrow}>
             Activité
           </Text>
@@ -257,185 +607,252 @@ export default function DeliveryDeliveries() {
             Mes livraisons
           </Text>
           <Text style={styles.subtitle}>
-            Suivez votre livraison en cours et consultez votre historique.
+            Suivez vos livraisons en cours et consultez votre historique.
           </Text>
         </View>
 
-        <View style={styles.headerIcon}>
+        <View style={styles.heroIcon}>
           <Icon
             name="local_shipping"
-            size={27}
-            color={colors.primary}
+            size={30}
+            color={brand.blue}
           />
         </View>
-      </View>
+      </LinearGradient>
 
-      {error ? (
-        <Pressable
-          style={styles.errorCard}
-          onPress={() => {
-            void loadDeliveries()
-          }}
-        >
-          <Icon
-            name="error"
-            size={20}
-            color={colors.error}
-          />
-          <View style={styles.errorContent}>
-            <Text style={styles.errorTitle}>
-              Impossible de charger les livraisons
-            </Text>
-            <Text style={styles.errorText}>
-              {error}
-            </Text>
-            <Text style={styles.retryText}>
-              Appuyez pour réessayer
-            </Text>
-          </View>
-        </Pressable>
-      ) : null}
+      <View style={styles.body}>
+        {error ? (
+          <Pressable
+            style={styles.errorCard}
+            onPress={() => {
+              void loadDeliveries()
+            }}
+          >
+            <Icon
+              name="error"
+              size={20}
+              color={brand.danger}
+            />
 
-      <Text style={styles.sectionTitle}>
-        Livraison active
-      </Text>
+            <View style={styles.errorContent}>
+              <Text style={styles.errorTitle}>
+                Impossible de charger les livraisons
+              </Text>
+              <Text style={styles.errorText}>
+                {error}
+              </Text>
+              <Text style={styles.retryText}>
+                Appuyez pour réessayer
+              </Text>
+            </View>
+          </Pressable>
+        ) : null}
 
-      {activeOrder ? (
-        <OrderCard
-          order={activeOrder}
-          active
-        />
-      ) : (
-        <View style={styles.emptyCard}>
-          <Icon
-            name="inventory_2"
-            size={32}
-            color={colors.textMuted}
-          />
-          <Text style={styles.emptyTitle}>
-            Aucune livraison active
-          </Text>
-          <Text style={styles.emptyText}>
-            Une livraison acceptée apparaîtra ici automatiquement.
-          </Text>
-        </View>
-      )}
-
-      <View style={styles.historyHeader}>
         <Text style={styles.sectionTitle}>
-          Historique
+          Livraison active
         </Text>
 
-        <View style={styles.historyCount}>
-          <Text style={styles.historyCountText}>
-            {history.length}
-          </Text>
-        </View>
-      </View>
-
-      {history.length > 0 ? (
-        <View style={styles.historyList}>
-          {history.map((order) => (
-            <OrderCard
-              key={order.id}
-              order={order}
-            />
-          ))}
-        </View>
-      ) : (
-        <View style={styles.emptyCard}>
-          <Icon
-            name="history"
-            size={32}
-            color={colors.textMuted}
+        {activeOrder ? (
+          <DetailedOrderCard
+            order={activeOrder}
+            active
           />
-          <Text style={styles.emptyTitle}>
-            Aucun historique
+        ) : (
+          <View style={styles.emptyCard}>
+            <View style={styles.emptyIcon}>
+              <Icon
+                name="inventory_2"
+                size={33}
+                color={brand.blue}
+              />
+            </View>
+
+            <Text style={styles.emptyTitle}>
+              Aucune livraison active
+            </Text>
+            <Text style={styles.emptyText}>
+              Une livraison acceptée apparaîtra ici automatiquement.
+            </Text>
+          </View>
+        )}
+
+        <View style={styles.historyHeader}>
+          <Text style={styles.sectionTitle}>
+            Historique
           </Text>
-          <Text style={styles.emptyText}>
-            Vos livraisons terminées, annulées ou échouées apparaîtront ici.
-          </Text>
+
+          <View style={styles.historyHeaderRight}>
+            <View style={styles.historyCount}>
+              <Text style={styles.historyCountText}>
+                {history.length}
+              </Text>
+            </View>
+
+            {history.length > 0 ? (
+              <Text style={styles.allHistoryText}>
+                Total
+              </Text>
+            ) : null}
+          </View>
         </View>
-      )}
-    </ScrollView>
+
+        {firstHistoryItem ? (
+          <DetailedOrderCard
+            order={firstHistoryItem}
+          />
+        ) : (
+          <View style={styles.emptyHistoryCard}>
+            <View style={styles.emptyHistoryIcon}>
+              <Icon
+                name="history"
+                size={29}
+                color={brand.blue}
+              />
+            </View>
+
+            <Text style={styles.emptyTitle}>
+              Aucun historique
+            </Text>
+            <Text style={styles.emptyText}>
+              Vos livraisons terminées, annulées ou échouées apparaîtront ici.
+            </Text>
+          </View>
+        )}
+
+        {compactHistory.length > 0 ? (
+          <View style={styles.compactList}>
+            {compactHistory.map((order) => (
+              <CompactOrderCard
+                key={order.id}
+                order={order}
+              />
+            ))}
+          </View>
+        ) : null}
+      </View>
+      </ScrollView>
+    </View>
   )
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: brand.surface,
+  },
+
+  statusBarGuard: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 50,
+    backgroundColor: brand.navy,
+  },
+
   centerState: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 12,
     paddingHorizontal: 24,
-    backgroundColor: colors.surface,
+    backgroundColor: brand.surface,
   },
 
   centerStateText: {
     fontSize: 14,
-    color: colors.textSecondary,
+    color: brand.textSecondary,
     textAlign: 'center',
   },
 
   screen: {
     flex: 1,
-    backgroundColor: colors.surface,
+    backgroundColor: brand.surface,
   },
 
   content: {
-    paddingHorizontal: 20,
-    paddingTop: 56,
-    paddingBottom: 32,
+    paddingBottom: 34,
   },
 
-  header: {
+  hero: {
+    minHeight: 250,
+    paddingTop: 58,
+    paddingHorizontal: 24,
+    paddingBottom: 34,
+    borderBottomLeftRadius: 36,
+    borderBottomRightRadius: 36,
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 16,
-    marginBottom: 26,
+  },
+
+  heroText: {
+    flex: 1,
+    paddingRight: 8,
   },
 
   eyebrow: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.secondary,
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#7FE7F0',
     textTransform: 'uppercase',
-    letterSpacing: 0.8,
+    letterSpacing: 0.9,
   },
 
   title: {
-    marginTop: 4,
-    fontSize: 28,
-    fontWeight: '800',
-    color: colors.primary,
+    marginTop: 10,
+    fontSize: 34,
+    lineHeight: 40,
+    fontWeight: '900',
+    color: brand.white,
+    letterSpacing: -0.6,
   },
 
   subtitle: {
-    marginTop: 8,
-    maxWidth: 285,
-    fontSize: 14,
-    lineHeight: 20,
-    color: colors.textSecondary,
+    marginTop: 14,
+    maxWidth: 290,
+    fontSize: 16,
+    lineHeight: 23,
+    color: 'rgba(255,255,255,0.92)',
   },
 
-  headerIcon: {
-    width: 52,
-    height: 52,
-    borderRadius: 18,
+  heroIcon: {
+    width: 66,
+    height: 66,
+    borderRadius: 20,
+    marginTop: 28,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.surfaceLowest,
+    backgroundColor: brand.white,
+    shadowColor: '#071445',
+    shadowOpacity: 0.14,
+    shadowOffset: { width: 0, height: 6 },
+    shadowRadius: 14,
+    elevation: 5,
+  },
+
+  body: {
+    paddingHorizontal: 20,
+    paddingTop: 28,
+  },
+
+  sectionTitle: {
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '900',
+    color: brand.text,
+    letterSpacing: -0.35,
   },
 
   errorCard: {
-    marginBottom: 20,
+    marginBottom: 22,
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 10,
     borderRadius: 18,
     padding: 14,
-    backgroundColor: colors.errorBg,
+    backgroundColor: brand.dangerBg,
   },
 
   errorContent: {
@@ -444,41 +861,122 @@ const styles = StyleSheet.create({
 
   errorTitle: {
     fontSize: 13,
-    fontWeight: '700',
-    color: colors.error,
+    fontWeight: '800',
+    color: brand.danger,
   },
 
   errorText: {
     marginTop: 3,
     fontSize: 12,
     lineHeight: 17,
-    color: colors.error,
+    color: brand.danger,
   },
 
   retryText: {
-    marginTop: 6,
+    marginTop: 7,
     fontSize: 12,
-    fontWeight: '700',
-    color: colors.primary,
-  },
-
-  sectionTitle: {
-    fontSize: 17,
     fontWeight: '800',
-    color: colors.primary,
-    marginBottom: 12,
+    color: brand.blue,
   },
 
-  activeOrderCard: {
+  emptyCard: {
+    marginTop: 16,
+    marginBottom: 34,
+    minHeight: 218,
+    paddingHorizontal: 24,
+    paddingVertical: 30,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: brand.white,
     borderWidth: 1,
-    borderColor: colors.primary,
+    borderColor: '#F1F4FA',
+    shadowColor: '#0B1B63',
+    shadowOpacity: 0.07,
+    shadowOffset: { width: 0, height: 8 },
+    shadowRadius: 18,
+    elevation: 4,
   },
 
-  orderCard: {
+  emptyIcon: {
+    width: 80,
+    height: 80,
     marginBottom: 18,
-    borderRadius: 22,
-    padding: 17,
-    backgroundColor: colors.surfaceLowest,
+    borderRadius: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: brand.blueSoft,
+  },
+
+  emptyTitle: {
+    fontSize: 17,
+    fontWeight: '900',
+    color: brand.text,
+    textAlign: 'center',
+  },
+
+  emptyText: {
+    marginTop: 9,
+    maxWidth: 310,
+    fontSize: 13,
+    lineHeight: 20,
+    color: brand.textSecondary,
+    textAlign: 'center',
+  },
+
+  historyHeader: {
+    marginBottom: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+
+  historyHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+  },
+
+  historyCount: {
+    minWidth: 38,
+    height: 38,
+    paddingHorizontal: 10,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E8F3FF',
+  },
+
+  historyCountText: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: brand.blue,
+  },
+
+  allHistoryText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: brand.blue,
+  },
+
+  detailedCard: {
+    marginBottom: 18,
+    padding: 18,
+    borderRadius: 27,
+    backgroundColor: brand.white,
+    borderWidth: 1,
+    borderColor: '#F0F3F8',
+    shadowColor: '#0B1B63',
+    shadowOpacity: 0.07,
+    shadowOffset: { width: 0, height: 8 },
+    shadowRadius: 18,
+    elevation: 4,
+  },
+
+  activeDetailedCard: {
+    marginTop: 16,
+    marginBottom: 34,
+    borderColor: '#CFE3FF',
   },
 
   orderHeader: {
@@ -492,16 +990,15 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 11,
   },
 
-  orderIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
+  orderIconCircle: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.surface,
   },
 
   orderTitleGroup: {
@@ -511,144 +1008,235 @@ const styles = StyleSheet.create({
   orderEyebrow: {
     fontSize: 10,
     fontWeight: '700',
-    color: colors.textMuted,
+    color: brand.textSecondary,
     textTransform: 'uppercase',
+    letterSpacing: 0.4,
   },
 
   orderPharmacy: {
-    marginTop: 3,
-    fontSize: 14,
-    fontWeight: '800',
-    color: colors.primary,
+    marginTop: 4,
+    fontSize: 17,
+    lineHeight: 22,
+    fontWeight: '900',
+    color: brand.text,
   },
 
   statusBadge: {
-    maxWidth: 120,
+    maxWidth: 116,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
     borderRadius: 999,
-    paddingHorizontal: 9,
-    paddingVertical: 6,
-    backgroundColor: colors.outlineVariant,
   },
 
   statusBadgeText: {
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '800',
-    color: colors.textSecondary,
     textAlign: 'center',
   },
 
-  routeRow: {
-    marginTop: 16,
+  routeBlock: {
+    marginTop: 18,
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 9,
   },
 
-  routeText: {
-    flex: 1,
+  routeIconColumn: {
+    width: 46,
+    alignItems: 'center',
   },
 
-  routeLabel: {
-    fontSize: 9,
-    color: colors.textMuted,
-    textTransform: 'uppercase',
+  routeIconCircle: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: brand.blueSoft,
   },
 
-  routeValue: {
-    marginTop: 3,
-    fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '600',
-    color: colors.primary,
+  destinationIconCircle: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: brand.cyanSoft,
   },
 
   routeConnector: {
     width: 2,
-    height: 13,
-    marginLeft: 8,
-    marginTop: 3,
-    backgroundColor: colors.outlineVariant,
+    height: 21,
+    marginTop: 4,
+    backgroundColor: '#DDE5F0',
   },
 
-  metaGrid: {
-    marginTop: 16,
-    flexDirection: 'row',
-    gap: 8,
-  },
-
-  metaBox: {
+  routeTextColumn: {
     flex: 1,
-    borderRadius: 13,
-    padding: 10,
-    backgroundColor: colors.surface,
+    paddingTop: 3,
+    paddingLeft: 2,
+  },
+
+  routeLabel: {
+    fontSize: 10,
+    color: brand.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+
+  routeValue: {
+    marginTop: 4,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '700',
+    color: brand.text,
+  },
+
+  metaRow: {
+    marginTop: 20,
+    flexDirection: 'row',
+    gap: 10,
+  },
+
+  metaCard: {
+    flex: 1,
+    minHeight: 72,
+    paddingHorizontal: 11,
+    paddingVertical: 12,
+    borderRadius: 17,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    backgroundColor: '#F8FAFF',
+    borderWidth: 1,
+    borderColor: brand.border,
+  },
+
+  metaIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: brand.blueSoft,
+  },
+
+  metaText: {
+    flex: 1,
   },
 
   metaLabel: {
     fontSize: 9,
-    color: colors.textMuted,
+    color: brand.textMuted,
+    textTransform: 'uppercase',
   },
 
   metaValue: {
     marginTop: 4,
     fontSize: 12,
-    fontWeight: '800',
-    color: colors.primary,
+    fontWeight: '900',
+    color: brand.text,
   },
 
   orderDate: {
-    marginTop: 12,
+    marginTop: 13,
     fontSize: 10,
-    color: colors.textMuted,
+    color: brand.textMuted,
     textAlign: 'right',
   },
 
-  emptyCard: {
-    marginBottom: 24,
-    borderRadius: 22,
-    padding: 24,
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: colors.surfaceLowest,
+  compactList: {
+    gap: 12,
   },
 
-  emptyTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: colors.primary,
-    textAlign: 'center',
+  compactCard: {
+    padding: 16,
+    borderRadius: 23,
+    backgroundColor: brand.white,
+    borderWidth: 1,
+    borderColor: '#F0F3F8',
+    shadowColor: '#0B1B63',
+    shadowOpacity: 0.05,
+    shadowOffset: { width: 0, height: 5 },
+    shadowRadius: 14,
+    elevation: 3,
   },
 
-  emptyText: {
-    fontSize: 12,
-    lineHeight: 18,
-    color: colors.textSecondary,
-    textAlign: 'center',
-  },
-
-  historyHeader: {
-    marginTop: 6,
+  compactTopRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 10,
   },
 
-  historyCount: {
-    minWidth: 28,
-    height: 28,
-    paddingHorizontal: 8,
-    borderRadius: 999,
+  compactIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.outlineVariant,
   },
 
-  historyCountText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: colors.primary,
+  compactIdentity: {
+    flex: 1,
   },
 
-  historyList: {
-    gap: 0,
+  compactEyebrow: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: brand.textSecondary,
+    textTransform: 'uppercase',
+  },
+
+  compactPharmacy: {
+    marginTop: 3,
+    fontSize: 14,
+    fontWeight: '900',
+    color: brand.text,
+  },
+
+  compactMetaRow: {
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  compactMetaItem: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+
+  compactMetaText: {
+    flexShrink: 1,
+    fontSize: 9,
+    color: brand.textSecondary,
+  },
+
+  compactMetaDivider: {
+    width: 1,
+    height: 20,
+    marginHorizontal: 8,
+    backgroundColor: brand.border,
+  },
+
+  emptyHistoryCard: {
+    marginBottom: 16,
+    padding: 24,
+    borderRadius: 25,
+    alignItems: 'center',
+    backgroundColor: brand.white,
+    borderWidth: 1,
+    borderColor: '#F0F3F8',
+  },
+
+  emptyHistoryIcon: {
+    width: 58,
+    height: 58,
+    marginBottom: 14,
+    borderRadius: 29,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: brand.blueSoft,
   },
 })

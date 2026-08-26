@@ -31,9 +31,38 @@ type DeliveryNavigationMapProps = {
   customerAddress?: string | null
 
   height?: number
+  variant?: 'default' | 'brand'
 }
 
 const MAP_STYLE_URL = 'https://demotiles.maplibre.org/style.json'
+
+const defaultPalette = {
+  agent: '#2563EB',
+  agentHalo: 'rgba(37, 99, 235, 0.20)',
+  pharmacy: '#059669',
+  customer: '#EA580C',
+  navigation: '#0F766E',
+  navigationSoft: '#EFF6FF',
+  navigationText: '#1D4ED8',
+  border: '#E2E8F0',
+  surface: '#F8FAFC',
+  text: '#0F172A',
+  muted: '#64748B',
+} as const
+
+const brandPalette = {
+  agent: '#0B43D5',
+  agentHalo: 'rgba(11, 67, 213, 0.18)',
+  pharmacy: '#12C9D3',
+  customer: '#052A95',
+  navigation: '#0B43D5',
+  navigationSoft: '#EEF5FF',
+  navigationText: '#0B43D5',
+  border: '#E4EBF7',
+  surface: '#F5F8FD',
+  text: '#10214D',
+  muted: '#68779B',
+} as const
 
 function buildCoordinate(
   latitude?: number | null,
@@ -57,7 +86,6 @@ function buildCoordinate(
     return null
   }
 
-  // Prevent accidental "Null Island" coordinates.
   if (latitude === 0 && longitude === 0) {
     return null
   }
@@ -81,8 +109,10 @@ export default function DeliveryNavigationMap({
   customerAddress,
 
   height = 300,
+  variant = 'default',
 }: DeliveryNavigationMapProps) {
   const [cameraKey, setCameraKey] = useState(0)
+  const palette = variant === 'brand' ? brandPalette : defaultPalette
 
   const agentCoordinate = useMemo(
     () => buildCoordinate(agentLatitude, agentLongitude),
@@ -157,17 +187,14 @@ export default function DeliveryNavigationMap({
       agentLongitudeValue,
       destinationLongitude,
     )
-
     const east = Math.max(
       agentLongitudeValue,
       destinationLongitude,
     )
-
     const south = Math.min(
       agentLatitudeValue,
       destinationLatitude,
     )
-
     const north = Math.max(
       agentLatitudeValue,
       destinationLatitude,
@@ -189,10 +216,7 @@ export default function DeliveryNavigationMap({
         left: 55,
       },
     }
-  }, [
-    agentCoordinate,
-    destination.coordinate,
-  ])
+  }, [agentCoordinate, destination.coordinate])
 
   const openExternalNavigation = async () => {
     if (!destination.coordinate) {
@@ -226,12 +250,30 @@ export default function DeliveryNavigationMap({
 
   if (!destination.coordinate || !cameraInitialView) {
     return (
-      <View style={styles.unavailableContainer}>
-        <Text style={styles.unavailableTitle}>
+      <View
+        style={[
+          styles.unavailableContainer,
+          {
+            backgroundColor: palette.surface,
+            borderColor: palette.border,
+          },
+        ]}
+      >
+        <Text
+          style={[
+            styles.unavailableTitle,
+            { color: palette.text },
+          ]}
+        >
           Carte indisponible
         </Text>
 
-        <Text style={styles.unavailableText}>
+        <Text
+          style={[
+            styles.unavailableText,
+            { color: palette.muted },
+          ]}
+        >
           Les coordonnées de destination ne sont pas disponibles.
         </Text>
       </View>
@@ -243,20 +285,38 @@ export default function DeliveryNavigationMap({
       ? 'Direction pharmacie'
       : 'Direction client'
 
+  const destinationColor =
+    destination.type === 'pharmacy'
+      ? palette.pharmacy
+      : palette.customer
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerTextContainer}>
-          <Text style={styles.directionLabel}>
+          <Text
+            style={[
+              styles.directionLabel,
+              { color: palette.muted },
+            ]}
+          >
             {destinationLabel}
           </Text>
 
-          <Text style={styles.destinationTitle}>
+          <Text
+            style={[
+              styles.destinationTitle,
+              { color: palette.text },
+            ]}
+          >
             {destination.title}
           </Text>
 
           <Text
-            style={styles.destinationAddress}
+            style={[
+              styles.destinationAddress,
+              { color: palette.muted },
+            ]}
             numberOfLines={2}
           >
             {destination.subtitle}
@@ -264,13 +324,21 @@ export default function DeliveryNavigationMap({
         </View>
 
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Recentrer la carte"
           onPress={recenterMap}
           style={({ pressed }) => [
             styles.recenterButton,
+            { backgroundColor: palette.navigationSoft },
             pressed && styles.buttonPressed,
           ]}
         >
-          <Text style={styles.recenterButtonText}>
+          <Text
+            style={[
+              styles.recenterButtonText,
+              { color: palette.navigationText },
+            ]}
+          >
             Recentrer
           </Text>
         </Pressable>
@@ -279,7 +347,10 @@ export default function DeliveryNavigationMap({
       <View
         style={[
           styles.mapContainer,
-          { height },
+          {
+            height,
+            backgroundColor: palette.border,
+          },
         ]}
       >
         <Map
@@ -300,11 +371,19 @@ export default function DeliveryNavigationMap({
               lngLat={agentCoordinate}
               anchor="center"
             >
-              <View style={styles.agentMarkerOuter}>
-                <View style={styles.agentMarker}>
-                  <Text style={styles.markerText}>
-                    L
-                  </Text>
+              <View
+                style={[
+                  styles.agentMarkerOuter,
+                  { backgroundColor: palette.agentHalo },
+                ]}
+              >
+                <View
+                  style={[
+                    styles.agentMarker,
+                    { backgroundColor: palette.agent },
+                  ]}
+                >
+                  <Text style={styles.markerText}>L</Text>
                 </View>
               </View>
             </Marker>
@@ -319,9 +398,7 @@ export default function DeliveryNavigationMap({
               <View
                 style={[
                   styles.destinationMarker,
-                  destination.type === 'pharmacy'
-                    ? styles.pharmacyMarker
-                    : styles.customerMarker,
+                  { backgroundColor: destinationColor },
                 ]}
               >
                 <Text style={styles.markerText}>
@@ -332,22 +409,27 @@ export default function DeliveryNavigationMap({
               <View
                 style={[
                   styles.markerPointer,
-                  destination.type === 'pharmacy'
-                    ? styles.pharmacyPointer
-                    : styles.customerPointer,
+                  { borderTopColor: destinationColor },
                 ]}
               />
             </View>
           </Marker>
         </Map>
 
-        <View
-          pointerEvents="none"
-          style={styles.legend}
-        >
+        <View pointerEvents="none" style={styles.legend}>
           <View style={styles.legendRow}>
-            <View style={styles.legendAgentDot} />
-            <Text style={styles.legendText}>
+            <View
+              style={[
+                styles.legendDot,
+                { backgroundColor: palette.agent },
+              ]}
+            />
+            <Text
+              style={[
+                styles.legendText,
+                { color: palette.text },
+              ]}
+            >
               Votre position
             </Text>
           </View>
@@ -355,26 +437,29 @@ export default function DeliveryNavigationMap({
           <View style={styles.legendRow}>
             <View
               style={[
-                styles.legendDestinationDot,
-                destination.type === 'pharmacy'
-                  ? styles.pharmacyMarker
-                  : styles.customerMarker,
+                styles.legendDot,
+                { backgroundColor: destinationColor },
               ]}
             />
-
-            <Text style={styles.legendText}>
-              {destination.type === 'pharmacy'
-                ? 'Pharmacie'
-                : 'Client'}
+            <Text
+              style={[
+                styles.legendText,
+                { color: palette.text },
+              ]}
+            >
+              {destination.type === 'pharmacy' ? 'Pharmacie' : 'Client'}
             </Text>
           </View>
         </View>
       </View>
 
       <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Ouvrir l’itinéraire vers ${destination.type === 'pharmacy' ? 'la pharmacie' : 'le client'}`}
         onPress={openExternalNavigation}
         style={({ pressed }) => [
           styles.navigationButton,
+          { backgroundColor: palette.navigation },
           pressed && styles.buttonPressed,
         ]}
       >
@@ -383,7 +468,12 @@ export default function DeliveryNavigationMap({
         </Text>
       </Pressable>
 
-      <Text style={styles.navigationHint}>
+      <Text
+        style={[
+          styles.navigationHint,
+          { color: palette.muted },
+        ]}
+      >
         Ouvre la navigation routière vers la destination.
       </Text>
     </View>
@@ -408,7 +498,6 @@ const styles = StyleSheet.create({
   },
 
   directionLabel: {
-    color: '#64748B',
     fontSize: 12,
     fontWeight: '700',
     textTransform: 'uppercase',
@@ -416,35 +505,30 @@ const styles = StyleSheet.create({
   },
 
   destinationTitle: {
-    color: '#0F172A',
     fontSize: 16,
     fontWeight: '800',
   },
 
   destinationAddress: {
-    color: '#64748B',
     fontSize: 13,
     lineHeight: 18,
     marginTop: 3,
   },
 
   recenterButton: {
-    backgroundColor: '#EFF6FF',
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 9,
   },
 
   recenterButtonText: {
-    color: '#1D4ED8',
     fontSize: 12,
     fontWeight: '800',
   },
 
   mapContainer: {
-    borderRadius: 16,
+    borderRadius: 18,
     overflow: 'hidden',
-    backgroundColor: '#E2E8F0',
   },
 
   map: {
@@ -455,7 +539,6 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: 'rgba(37, 99, 235, 0.20)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -464,7 +547,6 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: '#2563EB',
     borderWidth: 2,
     borderColor: '#FFFFFF',
     alignItems: 'center',
@@ -485,14 +567,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  pharmacyMarker: {
-    backgroundColor: '#059669',
-  },
-
-  customerMarker: {
-    backgroundColor: '#EA580C',
-  },
-
   markerPointer: {
     width: 0,
     height: 0,
@@ -502,14 +576,6 @@ const styles = StyleSheet.create({
     borderLeftColor: 'transparent',
     borderRightColor: 'transparent',
     marginTop: -2,
-  },
-
-  pharmacyPointer: {
-    borderTopColor: '#059669',
-  },
-
-  customerPointer: {
-    borderTopColor: '#EA580C',
   },
 
   markerText: {
@@ -534,15 +600,7 @@ const styles = StyleSheet.create({
     marginVertical: 2,
   },
 
-  legendAgentDot: {
-    width: 9,
-    height: 9,
-    borderRadius: 5,
-    backgroundColor: '#2563EB',
-    marginRight: 6,
-  },
-
-  legendDestinationDot: {
+  legendDot: {
     width: 9,
     height: 9,
     borderRadius: 5,
@@ -550,7 +608,6 @@ const styles = StyleSheet.create({
   },
 
   legendText: {
-    color: '#334155',
     fontSize: 10,
     fontWeight: '700',
   },
@@ -558,8 +615,7 @@ const styles = StyleSheet.create({
   navigationButton: {
     marginTop: 12,
     minHeight: 48,
-    borderRadius: 12,
-    backgroundColor: '#0F766E',
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 16,
@@ -572,7 +628,6 @@ const styles = StyleSheet.create({
   },
 
   navigationHint: {
-    color: '#64748B',
     fontSize: 11,
     textAlign: 'center',
     marginTop: 6,
@@ -585,20 +640,16 @@ const styles = StyleSheet.create({
   unavailableContainer: {
     marginTop: 16,
     borderRadius: 14,
-    backgroundColor: '#F8FAFC',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
     padding: 16,
   },
 
   unavailableTitle: {
-    color: '#0F172A',
     fontSize: 15,
     fontWeight: '800',
   },
 
   unavailableText: {
-    color: '#64748B',
     fontSize: 13,
     lineHeight: 18,
     marginTop: 4,
