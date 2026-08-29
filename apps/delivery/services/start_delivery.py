@@ -1,6 +1,9 @@
 from django.db import transaction
 from rest_framework.exceptions import ValidationError
 
+from apps.delivery.services.incident_guards import (
+    ensure_no_unresolved_delivery_incident,
+)
 from apps.orders.constants import OrderStatus
 from apps.orders.models import Order
 from apps.orders.services.state_machine import transition
@@ -30,6 +33,10 @@ def start_delivery(*, order_id, agent):
             raise ValidationError(
                 'Delivery can only be started after pickup verification.',
             )
+
+        ensure_no_unresolved_delivery_incident(
+            order=order,
+        )
 
         transition(
             order,

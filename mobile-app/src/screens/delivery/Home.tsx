@@ -12,7 +12,9 @@ import {
   View,
 } from 'react-native'
 import { useFocusEffect, useNavigation } from '@react-navigation/native'
+import type { CompositeNavigationProp } from '@react-navigation/native'
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs'
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
 import { LinearGradient } from 'expo-linear-gradient'
 import { StatusBar } from 'expo-status-bar'
 import * as Location from 'expo-location'
@@ -34,7 +36,10 @@ import {
   usersApi,
   type UserProfile,
 } from '../../api/users'
-import type { DeliveryTabParamList } from '../../navigation/types'
+import type {
+  DeliveryMainStackParamList,
+  DeliveryTabParamList,
+} from '../../navigation/types'
 import { colors } from '../../theme/colors'
 
 const OFFER_REFRESH_INTERVAL_MS = 2_000
@@ -232,8 +237,12 @@ function DeliveryProgress({ status }: { status: string }) {
 export default function DeliveryHome() {
   const insets = useSafeAreaInsets()
 
-  const navigation =
-    useNavigation<BottomTabNavigationProp<DeliveryTabParamList>>()
+  const navigation = useNavigation<
+    CompositeNavigationProp<
+      BottomTabNavigationProp<DeliveryTabParamList>,
+      NativeStackNavigationProp<DeliveryMainStackParamList>
+    >
+  >()
 
   const [user, setUser] = useState<UserProfile | null>(null)
   const [profile, setProfile] =
@@ -1589,6 +1598,37 @@ export default function DeliveryHome() {
               variant="brand"
             />
           </View>
+
+
+          <Pressable
+            style={styles.incidentEntryButton}
+            onPress={() => {
+              navigation.navigate('Incident', {
+                orderId: activeOrder.id,
+              })
+            }}
+          >
+            <View style={styles.incidentEntryIcon}>
+              <Icon
+                name="report_problem"
+                size={20}
+                color={homePalette.warning}
+              />
+            </View>
+            <View style={styles.incidentEntryCopy}>
+              <Text style={styles.incidentEntryTitle}>
+                Incident / assistance
+              </Text>
+              <Text style={styles.incidentEntryText}>
+                Consultez l’état d’un incident lié à cette livraison.
+              </Text>
+            </View>
+            <Icon
+              name="chevron_right"
+              size={22}
+              color={homePalette.brandBlue}
+            />
+          </Pressable>
 
           {activeOrder.status === 'awaiting_agent' ? (
             <View style={styles.nextActionCard}>
@@ -3837,6 +3877,45 @@ const styles = StyleSheet.create({
     fontSize: 9,
     lineHeight: 14,
     color: colors.textSecondary,
+  },
+
+
+  incidentEntryButton: {
+    marginTop: 14,
+    borderRadius: 17,
+    padding: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    backgroundColor: homePalette.warningBg,
+    borderWidth: 1,
+    borderColor: '#FBE6A8',
+  },
+
+  incidentEntryIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFF3C6',
+  },
+
+  incidentEntryCopy: {
+    flex: 1,
+  },
+
+  incidentEntryTitle: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#8B5A00',
+  },
+
+  incidentEntryText: {
+    marginTop: 3,
+    fontSize: 10,
+    lineHeight: 15,
+    color: '#7A5B1A',
   },
 
   activeEmptyCard: {

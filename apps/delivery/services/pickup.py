@@ -7,6 +7,11 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
+from apps.delivery.services.incident_guards import (
+    UNRESOLVED_DELIVERY_INCIDENT_MESSAGE,
+    ensure_no_unresolved_delivery_incident,
+    has_unresolved_delivery_incident,
+)
 from apps.orders.constants import OrderStatus
 from apps.orders.models import Order
 from apps.orders.services.state_machine import transition
@@ -95,6 +100,10 @@ def issue_pickup_verification(
                 'A delivery agent must accept the order before pickup verification is issued.',
             )
 
+        ensure_no_unresolved_delivery_incident(
+            order=locked_order,
+        )
+
         verification, _ = DeliveryVerification.objects.update_or_create(
             order=locked_order,
             verification_type=DeliveryVerificationType.PICKUP,
@@ -170,6 +179,10 @@ def verify_pickup(
         elif order.status != OrderStatus.AWAITING_AGENT:
             error = ValidationError(
                 'This order is not awaiting pickup verification.',
+            )
+        elif has_unresolved_delivery_incident(order=order):
+            error = ValidationError(
+                UNRESOLVED_DELIVERY_INCIDENT_MESSAGE,
             )
         else:
             verification = (

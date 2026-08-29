@@ -46,6 +46,7 @@ export type MainStackParamList = {
 
 export type DeliveryMainStackParamList = {
   Tabs: NavigatorScreenParams<DeliveryTabParamList>
+  Incident: { orderId: number }
 }
 
 export type RootStackParamList = {

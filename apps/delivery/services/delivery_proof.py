@@ -7,6 +7,11 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
+from apps.delivery.services.incident_guards import (
+    UNRESOLVED_DELIVERY_INCIDENT_MESSAGE,
+    ensure_no_unresolved_delivery_incident,
+    has_unresolved_delivery_incident,
+)
 from apps.orders.constants import OrderStatus, PaymentMethod
 from apps.orders.models import Order
 from apps.orders.services.state_machine import transition
@@ -104,6 +109,10 @@ def issue_delivery_pin(
                 'This order does not have an assigned delivery agent.',
             )
 
+        ensure_no_unresolved_delivery_incident(
+            order=order,
+        )
+
         verification, _ = DeliveryVerification.objects.update_or_create(
             order=order,
             verification_type=DeliveryVerificationType.DELIVERY,
@@ -170,6 +179,10 @@ def complete_delivery(
         elif order.status != OrderStatus.OUT_FOR_DELIVERY:
             error = ValidationError(
                 'This order is not out for delivery.',
+            )
+        elif has_unresolved_delivery_incident(order=order):
+            error = ValidationError(
+                UNRESOLVED_DELIVERY_INCIDENT_MESSAGE,
             )
         else:
             payment = (

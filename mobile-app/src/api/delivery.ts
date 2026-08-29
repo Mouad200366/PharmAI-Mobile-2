@@ -57,7 +57,8 @@ export interface DeliveryOrder {
   updated_at: string
 }
 
-export type PickupVerificationMethod = 'qr' | 'pin'
+export type DeliveryVerificationMethod = 'qr' | 'pin'
+export type PickupVerificationMethod = DeliveryVerificationMethod
 
 export interface PickupVerificationPayload {
   method: PickupVerificationMethod
@@ -96,6 +97,7 @@ export interface DeliveryEarningHistoryItem {
   paid_at: string | null
   created_at: string
 }
+
 export interface DeliveryCashSummary {
   outstanding_cash: string
   currency: string
@@ -114,6 +116,62 @@ export interface CashSettlementHistoryItem {
   completed_at: string | null
   note: string
   created_at: string
+}
+
+export type DeliveryIncidentReason =
+  | 'customer_unreachable'
+  | 'customer_refused'
+  | 'wrong_address'
+  | 'payment_issue'
+  | 'delivery_pin_issue'
+  | 'package_damaged'
+  | 'package_missing'
+  | 'vehicle_problem'
+  | 'agent_emergency'
+  | 'unsafe_situation'
+  | 'other'
+
+export type DeliveryIncidentStatus =
+  | 'open'
+  | 'resolved_continue'
+  | 'return_required'
+  | 'returning'
+  | 'returned'
+  | 'resolved'
+
+export type DeliveryIncidentReportedOrderStatus =
+  | 'awaiting_agent'
+  | 'picked_up'
+  | 'out_for_delivery'
+
+export interface DeliveryIncident {
+  id: number
+  order_id: number
+  agent_id: number
+  reason: DeliveryIncidentReason
+  status: DeliveryIncidentStatus
+  reported_order_status: DeliveryIncidentReportedOrderStatus
+  details: string
+  resolution_note: string
+  resolved_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface DeliveryIncidentReportPayload {
+  reason: DeliveryIncidentReason
+  details?: string
+}
+
+export interface CurrentDeliveryIncidentResponse {
+  incident: DeliveryIncident | null
+}
+
+export interface DeliveryReturnVerificationPayload {
+  credential: string
+  method: DeliveryVerificationMethod
+  latitude: number
+  longitude: number
 }
 
 export interface OnlineTogglePayload {
@@ -137,7 +195,6 @@ export const deliveryApi = {
       '/orders/active/',
     ),
 
-
   deliveryHistory: () =>
     client.get<DeliveryOrder[]>(
       '/orders/history/',
@@ -152,7 +209,8 @@ export const deliveryApi = {
     client.get<DeliveryEarningHistoryItem[]>(
       '/delivery/earnings/history/',
     ),
-    cashSummary: () =>
+
+  cashSummary: () =>
     client.get<DeliveryCashSummary>(
       '/delivery/cash/summary/',
     ),
@@ -161,6 +219,7 @@ export const deliveryApi = {
     client.get<CashSettlementHistoryItem[]>(
       '/delivery/cash/settlements/',
     ),
+
   me: () =>
     client.get<DeliveryAgentProfile>(
       '/delivery/me/',
@@ -185,6 +244,38 @@ export const deliveryApi = {
   currentOffer: () =>
     client.get<CurrentOfferResponse>(
       '/delivery/offers/current/',
+    ),
+
+  reportIncident: (
+    orderId: number,
+    data: DeliveryIncidentReportPayload,
+  ) =>
+    client.post<DeliveryIncident>(
+      `/delivery/orders/${orderId}/incidents/report/`,
+      data,
+    ),
+
+  currentIncident: (
+    orderId: number,
+  ) =>
+    client.get<CurrentDeliveryIncidentResponse>(
+      `/delivery/orders/${orderId}/incidents/current/`,
+    ),
+
+  startIncidentReturn: (
+    incidentId: number,
+  ) =>
+    client.post<DeliveryIncident>(
+      `/delivery/incidents/${incidentId}/return/start/`,
+    ),
+
+  verifyIncidentReturn: (
+    incidentId: number,
+    data: DeliveryReturnVerificationPayload,
+  ) =>
+    client.post<DeliveryIncident>(
+      `/delivery/incidents/${incidentId}/return/verify/`,
+      data,
     ),
 
   completeDelivery: (
