@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
+import { LinearGradient } from 'expo-linear-gradient'
 import {
   ActivityIndicator,
   Alert,
@@ -38,6 +39,10 @@ import {
 import {
   firstError,
 } from '../../api/errors'
+import {
+  isActiveOrder,
+  ordersApi,
+} from '../../api/orders'
 import Icon from '../../components/ui/Icon'
 import type {
   AppTabParamList,
@@ -71,6 +76,15 @@ type PasswordForm = {
   new_password: string
   confirm_password: string
 }
+
+type OrderStats = {
+  total: number
+  delivered: number
+  prescriptions: number
+  active: number
+}
+
+type ProfilePanel = 'personal' | 'security' | 'payments' | null
 
 const MAX_AVATAR_SIZE = 5 * 1024 * 1024
 const SUPPORTED_AVATAR_TYPES = new Set([
@@ -421,6 +435,38 @@ export default function Profile({
     setShowConfirmPassword,
   ] = useState(false)
 
+  const [
+    orderStats,
+    setOrderStats,
+  ] = useState<OrderStats | null>(null)
+
+  const [
+    openPanel,
+    setOpenPanel,
+  ] = useState<ProfilePanel>(null)
+
+  const loadOrderStats = useCallback(async () => {
+    try {
+      const response = await ordersApi.list()
+      const orders = response.data
+
+      setOrderStats({
+        total: orders.length,
+        delivered: orders.filter(
+          (order) => order.status === 'delivered',
+        ).length,
+        prescriptions: orders.filter(
+          (order) => order.prescription_mode !== 'none',
+        ).length,
+        active: orders.filter(
+          (order) => isActiveOrder(order.status),
+        ).length,
+      })
+    } catch {
+      setOrderStats(null)
+    }
+  }, [])
+
   const loadProfile = useCallback(
     async (showLoader = false) => {
       if (showLoader) {
@@ -451,7 +497,8 @@ export default function Profile({
   useFocusEffect(
     useCallback(() => {
       void loadProfile(true)
-    }, [loadProfile]),
+      void loadOrderStats()
+    }, [loadOrderStats, loadProfile]),
   )
 
   const normalizedForm = useMemo(
@@ -517,7 +564,10 @@ export default function Profile({
 
   async function handleRefresh() {
     setRefreshing(true)
-    await loadProfile(false)
+    await Promise.all([
+      loadProfile(false),
+      loadOrderStats(),
+    ])
     setRefreshing(false)
   }
 
@@ -906,704 +956,846 @@ export default function Profile({
 
   return (
     <ScrollView
-      style={styles.screen}
-      contentContainerStyle={styles.content}
+      style={styles.mockScreen}
+      contentContainerStyle={styles.mockContent}
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
           onRefresh={() => void handleRefresh()}
-          tintColor={colors.primary}
-          colors={[colors.primary]}
+          tintColor="#073BDF"
+          colors={['#073BDF']}
         />
       }
     >
-      <View style={styles.pageHeader}>
-        <View style={styles.pageHeaderText}>
-          <Text style={styles.pageTitle}>
-            Mon profil
-          </Text>
-          <Text style={styles.pageSubtitle}>
-            Gérez vos informations personnelles et la sécurité de votre compte.
-          </Text>
-        </View>
+      <LinearGradient
+        colors={['#00236F', '#073BDF', '#087DFF', '#10D1D0']}
+        start={{ x: 0.02, y: 0 }}
+        end={{ x: 1, y: 0.92 }}
+        style={styles.mockHero}
+      >
+        <View style={styles.mockHeroOrbLarge} />
+        <View style={styles.mockHeroOrbSmall} />
 
-        <View
-          style={[
-            styles.verifiedBadge,
-            !profile.is_phone_verified
-              && styles.unverifiedBadge,
-          ]}
-        >
-          <Icon
-            name={
-              profile.is_phone_verified
-                ? 'verified'
-                : 'error_outline'
-            }
-            size={15}
-            color={
-              profile.is_phone_verified
-                ? '#047857'
-                : '#b45309'
-            }
-          />
-          <Text
-            style={[
-              styles.verifiedBadgeText,
-              !profile.is_phone_verified
-                && styles.unverifiedBadgeText,
-            ]}
-          >
-            {profile.is_phone_verified
-              ? 'Téléphone vérifié'
-              : 'Non vérifié'}
-          </Text>
-        </View>
-      </View>
+        <View style={styles.mockHeroTopRow}>
+          <View style={styles.mockHeroCopy}>
+            <Text style={styles.mockHeroTitle}>
+              Mon profil
+            </Text>
+            <Text style={styles.mockHeroSubtitle}>
+              Gérez vos informations personnelles et votre compte
+            </Text>
+          </View>
 
-      {loadError ? (
-        <View style={styles.inlineWarning}>
-          <Icon
-            name="warning"
-            size={18}
-            color="#b45309"
-          />
-          <Text style={styles.inlineWarningText}>
-            {loadError}
-          </Text>
-        </View>
-      ) : null}
-
-      <View style={styles.identityCard}>
-        <View style={styles.identityTop}>
           <Pressable
-            style={styles.avatarWrapper}
-            onPress={showAvatarActions}
-            disabled={avatarBusy}
+            accessibilityRole="button"
+            accessibilityLabel="Ouvrir les informations personnelles"
+            style={({ pressed }) => [
+              styles.mockSettingsButton,
+              pressed && styles.mockPressed,
+            ]}
+            onPress={() =>
+              setOpenPanel((current) =>
+                current === 'personal'
+                  ? null
+                  : 'personal',
+              )
+            }
           >
-            <View style={styles.avatar}>
-              {profile.avatar ? (
-                <Image
-                  source={{ uri: profile.avatar }}
-                  style={styles.avatarImage}
-                />
-              ) : (
-                <Text style={styles.avatarInitials}>
-                  {initials}
-                </Text>
-              )}
-
-              {avatarBusy ? (
-                <View style={styles.avatarLoadingOverlay}>
-                  <ActivityIndicator
-                    size="small"
-                    color={colors.white}
-                  />
-                </View>
-              ) : null}
-            </View>
-
-            <View style={styles.avatarEditButton}>
-              <Icon
-                name="photo_camera"
-                size={15}
-                color={colors.white}
-              />
-            </View>
+            <Icon
+              name="settings"
+              size={25}
+              color="#FFFFFF"
+            />
           </Pressable>
+        </View>
+      </LinearGradient>
 
-          <View style={styles.identityContent}>
-            <Text style={styles.profileName}>
-              {profile.full_name
-                || `${profile.first_name} ${profile.last_name}`.trim()}
+      <View style={styles.mockBody}>
+        {loadError ? (
+          <View style={styles.inlineWarning}>
+            <Icon
+              name="warning"
+              size={18}
+              color="#b45309"
+            />
+            <Text style={styles.inlineWarningText}>
+              {loadError}
             </Text>
+          </View>
+        ) : null}
 
-            <Text style={styles.profileRole}>
-              Compte patient
-            </Text>
+        <View style={styles.mockProfileCard}>
+          <View style={styles.mockIdentityRow}>
+            <Pressable
+              style={styles.mockAvatarWrapper}
+              onPress={showAvatarActions}
+              disabled={avatarBusy}
+            >
+              <View style={styles.mockAvatar}>
+                {profile.avatar ? (
+                  <Image
+                    source={{ uri: profile.avatar }}
+                    style={styles.mockAvatarImage}
+                  />
+                ) : (
+                  <Text style={styles.mockAvatarInitials}>
+                    {initials}
+                  </Text>
+                )}
 
-            <View style={styles.identityMeta}>
-              <Icon
-                name="phone"
-                size={15}
-                color={colors.textSecondary}
-              />
-              <Text style={styles.identityMetaText}>
-                {profile.phone}
-              </Text>
-            </View>
+                {avatarBusy ? (
+                  <View style={styles.mockAvatarBusy}>
+                    <ActivityIndicator
+                      size="small"
+                      color="#FFFFFF"
+                    />
+                  </View>
+                ) : null}
+              </View>
 
-            {profile.email ? (
-              <View style={styles.identityMeta}>
+              <View style={styles.mockCameraButton}>
                 <Icon
-                  name="mail_outline"
-                  size={15}
-                  color={colors.textSecondary}
+                  name="photo_camera"
+                  size={17}
+                  color="#FFFFFF"
                 />
+              </View>
+            </Pressable>
+
+            <View style={styles.mockIdentityCopy}>
+              <View style={styles.mockNameRow}>
                 <Text
-                  style={styles.identityMetaText}
+                  style={styles.mockProfileName}
+                  numberOfLines={2}
+                >
+                  {profile.full_name
+                    || `${profile.first_name} ${profile.last_name}`.trim()}
+                </Text>
+                <Icon
+                  name={
+                    profile.is_phone_verified
+                      ? 'verified'
+                      : 'error_outline'
+                  }
+                  size={19}
+                  color={
+                    profile.is_phone_verified
+                      ? '#0B5CFF'
+                      : '#D97706'
+                  }
+                />
+              </View>
+
+              <View style={styles.mockPatientBadge}>
+                <Icon
+                  name="shield"
+                  size={14}
+                  color="#0B5CFF"
+                />
+                <Text style={styles.mockPatientBadgeText}>
+                  Patient PharmAI
+                </Text>
+              </View>
+
+              {profile.email ? (
+                <Text
+                  style={styles.mockIdentityMeta}
                   numberOfLines={1}
                 >
                   {profile.email}
                 </Text>
-              </View>
-            ) : null}
+              ) : null}
 
-            {memberSince ? (
-              <View style={styles.identityMeta}>
-                <Icon
-                  name="calendar_month"
-                  size={15}
-                  color={colors.textMuted}
-                />
-                <Text style={styles.identityMetaMuted}>
-                  Membre depuis {memberSince}
-                </Text>
-              </View>
-            ) : null}
-          </View>
-        </View>
+              <Text style={styles.mockIdentityMeta}>
+                {profile.phone}
+              </Text>
+            </View>
 
-        <View style={styles.avatarActionsRow}>
-          <Pressable
-            style={styles.secondaryAction}
-            onPress={showAvatarActions}
-            disabled={avatarBusy}
-          >
             <Icon
-              name="image"
-              size={17}
-              color={colors.primary}
+              name="chevron_right"
+              size={25}
+              color="#8491A8"
             />
-            <Text style={styles.secondaryActionText}>
-              Modifier la photo
-            </Text>
-          </Pressable>
+          </View>
 
-          {profile.avatar ? (
-            <Pressable
-              style={styles.dangerGhostAction}
-              onPress={confirmRemoveAvatar}
-              disabled={avatarBusy}
-            >
+          {avatarError ? (
+            <View style={styles.errorBox}>
               <Icon
-                name="delete_outline"
+                name="error_outline"
                 size={17}
                 color={colors.error}
               />
-              <Text style={styles.dangerGhostActionText}>
-                Supprimer
+              <Text style={styles.errorText}>
+                {avatarError}
               </Text>
-            </Pressable>
+            </View>
           ) : null}
+
+          <View style={styles.mockStatsRow}>
+            <ProfileStat
+              icon="shopping_bag"
+              value={orderStats ? String(orderStats.total) : '—'}
+              title="Commandes"
+              subtitle="au total"
+              tint="#0B5CFF"
+              background="#EEF5FF"
+            />
+            <ProfileStat
+              icon="local_shipping"
+              value={orderStats ? String(orderStats.delivered) : '—'}
+              title="Livraisons"
+              subtitle="réussies"
+              tint="#12B981"
+              background="#ECFDF5"
+            />
+            <ProfileStat
+              icon="description"
+              value={orderStats ? String(orderStats.prescriptions) : '—'}
+              title="Ordonnances"
+              subtitle="enregistrées"
+              tint="#7C5CFC"
+              background="#F3F0FF"
+            />
+            <ProfileStat
+              icon="schedule"
+              value={orderStats ? String(orderStats.active) : '—'}
+              title="En cours"
+              subtitle="maintenant"
+              tint="#F59E0B"
+              background="#FFF8E8"
+            />
+          </View>
         </View>
 
-        {avatarError ? (
-          <View style={styles.errorBox}>
-            <Icon
-              name="error_outline"
-              size={17}
-              color={colors.error}
-            />
-            <Text style={styles.errorText}>
-              {avatarError}
-            </Text>
-          </View>
-        ) : null}
-      </View>
-
-      <View style={styles.quickLinksCard}>
-        <Text style={styles.quickLinksTitle}>
-          Accès rapides
+        <Text style={styles.mockSectionEyebrow}>
+          COMPTE
         </Text>
 
-        <View style={styles.quickLinksGrid}>
-          <QuickLink
+        <View style={styles.mockMenuCard}>
+          <ProfileMenuRow
+            icon="person"
+            title="Informations personnelles"
+            subtitle="Gérez vos informations de profil"
+            onPress={() =>
+              setOpenPanel((current) =>
+                current === 'personal'
+                  ? null
+                  : 'personal',
+              )
+            }
+          />
+          <View style={styles.mockMenuDivider} />
+          <ProfileMenuRow
             icon="location_on"
             title="Mes adresses"
-            description="Livraison et GPS"
+            subtitle="Gérez vos adresses de livraison"
             onPress={() => navigation.navigate('Addresses')}
           />
-
-          <QuickLink
-            icon="local_shipping"
-            title="Mes commandes"
-            description="Historique et suivi"
-            onPress={() => navigation.navigate('Orders')}
-          />
-        </View>
-      </View>
-
-      <View style={styles.card}>
-        <View style={styles.sectionHeader}>
-          <View style={styles.sectionIcon}>
-            <Icon
-              name="person"
-              size={19}
-              color={colors.primary}
-            />
-          </View>
-
-          <View style={styles.sectionHeaderText}>
-            <Text style={styles.sectionTitle}>
-              Informations personnelles
-            </Text>
-            <Text style={styles.sectionDescription}>
-              Ces informations sont utilisées pour votre compte et vos commandes.
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.nameRow}>
-          <FormField
-            label="Prénom"
-            error={profileValidation.first_name}
-            style={styles.nameField}
-          >
-            <TextInput
-              value={form.first_name}
-              onChangeText={(value) =>
-                updateForm('first_name', value)
-              }
-              placeholder="Votre prénom"
-              placeholderTextColor={colors.textMuted}
-              autoCapitalize="words"
-              textContentType="givenName"
-              style={[
-                styles.textInput,
-                profileValidation.first_name
-                  && styles.textInputError,
-              ]}
-            />
-          </FormField>
-
-          <FormField
-            label="Nom"
-            error={profileValidation.last_name}
-            style={styles.nameField}
-          >
-            <TextInput
-              value={form.last_name}
-              onChangeText={(value) =>
-                updateForm('last_name', value)
-              }
-              placeholder="Votre nom"
-              placeholderTextColor={colors.textMuted}
-              autoCapitalize="words"
-              textContentType="familyName"
-              style={[
-                styles.textInput,
-                profileValidation.last_name
-                  && styles.textInputError,
-              ]}
-            />
-          </FormField>
-        </View>
-
-        <FormField
-          label="E-mail"
-          optional
-          error={profileValidation.email}
-        >
-          <View
-            style={[
-              styles.inputWithIcon,
-              profileValidation.email
-                && styles.textInputError,
-            ]}
-          >
-            <Icon
-              name="mail_outline"
-              size={18}
-              color={colors.textMuted}
-            />
-
-            <TextInput
-              value={form.email}
-              onChangeText={(value) =>
-                updateForm('email', value)
-              }
-              placeholder="exemple@email.com"
-              placeholderTextColor={colors.textMuted}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-              textContentType="emailAddress"
-              style={styles.inputWithIconText}
-            />
-          </View>
-        </FormField>
-
-        <FormField
-          label="Date de naissance"
-          helper="Format : AAAA-MM-JJ"
-          error={profileValidation.date_of_birth}
-        >
-          <View
-            style={[
-              styles.inputWithIcon,
-              profileValidation.date_of_birth
-                && styles.textInputError,
-            ]}
-          >
-            <Icon
-              name="cake"
-              size={18}
-              color={colors.textMuted}
-            />
-
-            <TextInput
-              value={form.date_of_birth}
-              onChangeText={(value) =>
-                updateForm('date_of_birth', value)
-              }
-              placeholder="2000-01-31"
-              placeholderTextColor={colors.textMuted}
-              keyboardType="numbers-and-punctuation"
-              maxLength={10}
-              style={styles.inputWithIconText}
-            />
-          </View>
-        </FormField>
-
-        <FormField label="Genre">
-          <View style={styles.genderRow}>
-            {GENDER_OPTIONS.map((option) => {
-              const selected =
-                form.gender === option.value
-
-              return (
-                <Pressable
-                  key={option.value}
-                  style={[
-                    styles.genderOption,
-                    selected
-                      && styles.genderOptionSelected,
-                  ]}
-                  onPress={() =>
-                    updateForm('gender', option.value)
-                  }
-                >
-                  <Icon
-                    name={option.icon}
-                    size={17}
-                    color={
-                      selected
-                        ? colors.white
-                        : colors.textSecondary
-                    }
-                  />
-                  <Text
-                    style={[
-                      styles.genderOptionText,
-                      selected
-                        && styles.genderOptionTextSelected,
-                    ]}
-                  >
-                    {option.label}
-                  </Text>
-                </Pressable>
+          <View style={styles.mockMenuDivider} />
+          <ProfileMenuRow
+            icon="lock"
+            title="Sécurité & mot de passe"
+            subtitle="Changez votre mot de passe"
+            onPress={() =>
+              setOpenPanel((current) =>
+                current === 'security'
+                  ? null
+                  : 'security',
               )
-            })}
-          </View>
-        </FormField>
-
-        <View style={styles.readOnlyGrid}>
-          <ReadOnlyField
-            icon="phone"
-            label="Téléphone"
-            value={profile.phone}
+            }
           />
-
-          <ReadOnlyField
-            icon="badge"
-            label="CIN"
-            value={profile.cin}
+          <View style={styles.mockMenuDivider} />
+          <ProfileMenuRow
+            icon="credit_card"
+            title="Moyens de paiement"
+            subtitle="Consultez les options de paiement disponibles"
+            onPress={() =>
+              setOpenPanel((current) =>
+                current === 'payments'
+                  ? null
+                  : 'payments',
+              )
+            }
           />
         </View>
 
-        <View style={styles.readOnlyNotice}>
-          <Icon
-            name="info_outline"
-            size={17}
-            color={colors.textMuted}
-          />
-          <Text style={styles.readOnlyNoticeText}>
-            Le numéro de téléphone et le CIN ne peuvent pas être modifiés depuis l’application.
-          </Text>
-        </View>
+        {openPanel === 'personal' ? (
+          <View style={styles.mockExpandedCard}>
+            <View style={styles.mockExpandedHeader}>
+              <View style={styles.mockExpandedIcon}>
+                <Icon
+                  name="person"
+                  size={20}
+                  color="#073BDF"
+                />
+              </View>
+              <View style={styles.mockExpandedCopy}>
+                <Text style={styles.mockExpandedTitle}>
+                  Informations personnelles
+                </Text>
+                <Text style={styles.mockExpandedText}>
+                  Modifiez uniquement les champs autorisés par votre compte.
+                </Text>
+              </View>
+            </View>
 
-        {saveSuccess ? (
-          <View style={styles.successBox}>
-            <Icon
-              name="check_circle"
-              size={17}
-              color={colors.success}
-            />
-            <Text style={styles.successText}>
-              {saveSuccess}
-            </Text>
-          </View>
-        ) : null}
+            <View style={styles.nameRow}>
+              <FormField
+                label="Prénom"
+                error={profileValidation.first_name}
+                style={styles.nameField}
+              >
+                <TextInput
+                  value={form.first_name}
+                  onChangeText={(value) =>
+                    updateForm('first_name', value)
+                  }
+                  placeholder="Votre prénom"
+                  placeholderTextColor={colors.textMuted}
+                  autoCapitalize="words"
+                  textContentType="givenName"
+                  style={[
+                    styles.textInput,
+                    profileValidation.first_name
+                      && styles.textInputError,
+                  ]}
+                />
+              </FormField>
 
-        {saveError ? (
-          <View style={styles.errorBox}>
-            <Icon
-              name="error_outline"
-              size={17}
-              color={colors.error}
-            />
-            <Text style={styles.errorText}>
-              {saveError}
-            </Text>
-          </View>
-        ) : null}
+              <FormField
+                label="Nom"
+                error={profileValidation.last_name}
+                style={styles.nameField}
+              >
+                <TextInput
+                  value={form.last_name}
+                  onChangeText={(value) =>
+                    updateForm('last_name', value)
+                  }
+                  placeholder="Votre nom"
+                  placeholderTextColor={colors.textMuted}
+                  autoCapitalize="words"
+                  textContentType="familyName"
+                  style={[
+                    styles.textInput,
+                    profileValidation.last_name
+                      && styles.textInputError,
+                  ]}
+                />
+              </FormField>
+            </View>
 
-        {isDirty ? (
-          <View style={styles.unsavedNotice}>
-            <Icon
-              name="edit_note"
-              size={18}
-              color="#b45309"
-            />
-            <Text style={styles.unsavedNoticeText}>
-              Vous avez des modifications non enregistrées.
-            </Text>
-          </View>
-        ) : null}
-
-        <View style={styles.formActions}>
-          <Pressable
-            style={[
-              styles.resetButton,
-              (!isDirty || saving)
-                && styles.disabledButton,
-            ]}
-            onPress={resetProfileChanges}
-            disabled={!isDirty || saving}
-          >
-            <Text
-              style={[
-                styles.resetButtonText,
-                (!isDirty || saving)
-                  && styles.disabledButtonText,
-              ]}
+            <FormField
+              label="E-mail"
+              optional
+              error={profileValidation.email}
             >
-              Annuler
-            </Text>
-          </Pressable>
+              <View
+                style={[
+                  styles.inputWithIcon,
+                  profileValidation.email
+                    && styles.textInputError,
+                ]}
+              >
+                <Icon
+                  name="mail_outline"
+                  size={18}
+                  color={colors.textMuted}
+                />
+                <TextInput
+                  value={form.email}
+                  onChangeText={(value) =>
+                    updateForm('email', value)
+                  }
+                  placeholder="exemple@email.com"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  textContentType="emailAddress"
+                  style={styles.inputWithIconText}
+                />
+              </View>
+            </FormField>
 
-          <Pressable
-            style={[
-              styles.saveButton,
-              !canSave && styles.primaryButtonDisabled,
-            ]}
-            onPress={() => void handleSave()}
-            disabled={!canSave}
-          >
-            {saving ? (
-              <ActivityIndicator
-                size="small"
-                color={colors.white}
+            <FormField
+              label="Date de naissance"
+              helper="Format : AAAA-MM-JJ"
+              error={profileValidation.date_of_birth}
+            >
+              <View
+                style={[
+                  styles.inputWithIcon,
+                  profileValidation.date_of_birth
+                    && styles.textInputError,
+                ]}
+              >
+                <Icon
+                  name="cake"
+                  size={18}
+                  color={colors.textMuted}
+                />
+                <TextInput
+                  value={form.date_of_birth}
+                  onChangeText={(value) =>
+                    updateForm('date_of_birth', value)
+                  }
+                  placeholder="2000-01-31"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="numbers-and-punctuation"
+                  maxLength={10}
+                  style={styles.inputWithIconText}
+                />
+              </View>
+            </FormField>
+
+            <FormField label="Genre">
+              <View style={styles.genderRow}>
+                {GENDER_OPTIONS.map((option) => {
+                  const selected =
+                    form.gender === option.value
+
+                  return (
+                    <Pressable
+                      key={option.value}
+                      style={[
+                        styles.genderOption,
+                        selected
+                          && styles.genderOptionSelected,
+                      ]}
+                      onPress={() =>
+                        updateForm('gender', option.value)
+                      }
+                    >
+                      <Icon
+                        name={option.icon}
+                        size={17}
+                        color={
+                          selected
+                            ? colors.white
+                            : colors.textSecondary
+                        }
+                      />
+                      <Text
+                        style={[
+                          styles.genderOptionText,
+                          selected
+                            && styles.genderOptionTextSelected,
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  )
+                })}
+              </View>
+            </FormField>
+
+            <View style={styles.readOnlyGrid}>
+              <ReadOnlyField
+                icon="phone"
+                label="Téléphone"
+                value={profile.phone}
               />
-            ) : (
+              <ReadOnlyField
+                icon="badge"
+                label="CIN"
+                value={profile.cin}
+              />
+            </View>
+
+            <View style={styles.readOnlyNotice}>
               <Icon
-                name="save"
-                size={18}
-                color={colors.white}
+                name="info_outline"
+                size={17}
+                color={colors.textMuted}
               />
-            )}
+              <Text style={styles.readOnlyNoticeText}>
+                Le numéro de téléphone et le CIN ne peuvent pas être modifiés depuis l’application.
+              </Text>
+            </View>
 
-            <Text style={styles.saveButtonText}>
-              Enregistrer
-            </Text>
-          </Pressable>
-        </View>
-      </View>
+            {saveSuccess ? (
+              <View style={styles.successBox}>
+                <Icon
+                  name="check_circle"
+                  size={17}
+                  color={colors.success}
+                />
+                <Text style={styles.successText}>
+                  {saveSuccess}
+                </Text>
+              </View>
+            ) : null}
 
-      <View style={styles.card}>
-        <View style={styles.sectionHeader}>
-          <View style={styles.sectionIcon}>
-            <Icon
-              name="shield"
-              size={19}
-              color={colors.primary}
-            />
-          </View>
+            {saveError ? (
+              <View style={styles.errorBox}>
+                <Icon
+                  name="error_outline"
+                  size={17}
+                  color={colors.error}
+                />
+                <Text style={styles.errorText}>
+                  {saveError}
+                </Text>
+              </View>
+            ) : null}
 
-          <View style={styles.sectionHeaderText}>
-            <Text style={styles.sectionTitle}>
-              Sécurité
-            </Text>
-            <Text style={styles.sectionDescription}>
-              Utilisez un mot de passe unique que vous n’utilisez pas ailleurs.
-            </Text>
-          </View>
-        </View>
+            {isDirty ? (
+              <View style={styles.unsavedNotice}>
+                <Icon
+                  name="edit_note"
+                  size={18}
+                  color="#b45309"
+                />
+                <Text style={styles.unsavedNoticeText}>
+                  Vous avez des modifications non enregistrées.
+                </Text>
+              </View>
+            ) : null}
 
-        <PasswordField
-          label="Mot de passe actuel"
-          value={passwordForm.old_password}
-          onChangeText={(value) => {
-            setPasswordError(null)
-            setPasswordSuccess(null)
-            setPasswordForm((current) => ({
-              ...current,
-              old_password: value,
-            }))
-          }}
-          visible={showOldPassword}
-          onToggleVisible={() =>
-            setShowOldPassword((current) => !current)
-          }
-          error={
-            passwordForm.old_password.length > 0
-              ? passwordValidation.old_password
-              : undefined
-          }
-          autoComplete="current-password"
-        />
+            <View style={styles.formActions}>
+              <Pressable
+                style={[
+                  styles.resetButton,
+                  (!isDirty || saving)
+                    && styles.disabledButton,
+                ]}
+                onPress={resetProfileChanges}
+                disabled={!isDirty || saving}
+              >
+                <Text
+                  style={[
+                    styles.resetButtonText,
+                    (!isDirty || saving)
+                      && styles.disabledButtonText,
+                  ]}
+                >
+                  Annuler
+                </Text>
+              </Pressable>
 
-        <PasswordField
-          label="Nouveau mot de passe"
-          value={passwordForm.new_password}
-          onChangeText={(value) => {
-            setPasswordError(null)
-            setPasswordSuccess(null)
-            setPasswordForm((current) => ({
-              ...current,
-              new_password: value,
-            }))
-          }}
-          visible={showNewPassword}
-          onToggleVisible={() =>
-            setShowNewPassword((current) => !current)
-          }
-          error={
-            passwordForm.new_password.length > 0
-              ? passwordValidation.new_password
-              : undefined
-          }
-          helper="8 caractères minimum. Django peut appliquer des règles supplémentaires."
-          autoComplete="new-password"
-        />
-
-        <PasswordField
-          label="Confirmer le nouveau mot de passe"
-          value={passwordForm.confirm_password}
-          onChangeText={(value) => {
-            setPasswordError(null)
-            setPasswordSuccess(null)
-            setPasswordForm((current) => ({
-              ...current,
-              confirm_password: value,
-            }))
-          }}
-          visible={showConfirmPassword}
-          onToggleVisible={() =>
-            setShowConfirmPassword((current) => !current)
-          }
-          error={
-            passwordForm.confirm_password.length > 0
-              ? passwordValidation.confirm_password
-              : undefined
-          }
-          autoComplete="new-password"
-        />
-
-        {passwordSuccess ? (
-          <View style={styles.successBox}>
-            <Icon
-              name="check_circle"
-              size={17}
-              color={colors.success}
-            />
-            <Text style={styles.successText}>
-              {passwordSuccess}
-            </Text>
+              <Pressable
+                style={[
+                  styles.saveButton,
+                  !canSave && styles.primaryButtonDisabled,
+                ]}
+                onPress={() => void handleSave()}
+                disabled={!canSave}
+              >
+                {saving ? (
+                  <ActivityIndicator
+                    size="small"
+                    color={colors.white}
+                  />
+                ) : (
+                  <Icon
+                    name="save"
+                    size={18}
+                    color={colors.white}
+                  />
+                )}
+                <Text style={styles.saveButtonText}>
+                  Enregistrer
+                </Text>
+              </Pressable>
+            </View>
           </View>
         ) : null}
 
-        {passwordError ? (
-          <View style={styles.errorBox}>
-            <Icon
-              name="error_outline"
-              size={17}
-              color={colors.error}
+        {openPanel === 'security' ? (
+          <View style={styles.mockExpandedCard}>
+            <View style={styles.mockExpandedHeader}>
+              <View style={styles.mockExpandedIcon}>
+                <Icon
+                  name="lock"
+                  size={20}
+                  color="#073BDF"
+                />
+              </View>
+              <View style={styles.mockExpandedCopy}>
+                <Text style={styles.mockExpandedTitle}>
+                  Sécurité & mot de passe
+                </Text>
+                <Text style={styles.mockExpandedText}>
+                  Utilisez un mot de passe unique pour votre compte PharmAI.
+                </Text>
+              </View>
+            </View>
+
+            <PasswordField
+              label="Mot de passe actuel"
+              value={passwordForm.old_password}
+              onChangeText={(value) => {
+                setPasswordError(null)
+                setPasswordSuccess(null)
+                setPasswordForm((current) => ({
+                  ...current,
+                  old_password: value,
+                }))
+              }}
+              visible={showOldPassword}
+              onToggleVisible={() =>
+                setShowOldPassword((current) => !current)
+              }
+              error={
+                passwordForm.old_password.length > 0
+                  ? passwordValidation.old_password
+                  : undefined
+              }
+              autoComplete="current-password"
             />
-            <Text style={styles.errorText}>
-              {passwordError}
-            </Text>
+
+            <PasswordField
+              label="Nouveau mot de passe"
+              value={passwordForm.new_password}
+              onChangeText={(value) => {
+                setPasswordError(null)
+                setPasswordSuccess(null)
+                setPasswordForm((current) => ({
+                  ...current,
+                  new_password: value,
+                }))
+              }}
+              visible={showNewPassword}
+              onToggleVisible={() =>
+                setShowNewPassword((current) => !current)
+              }
+              error={
+                passwordForm.new_password.length > 0
+                  ? passwordValidation.new_password
+                  : undefined
+              }
+              helper="8 caractères minimum."
+              autoComplete="new-password"
+            />
+
+            <PasswordField
+              label="Confirmer le nouveau mot de passe"
+              value={passwordForm.confirm_password}
+              onChangeText={(value) => {
+                setPasswordError(null)
+                setPasswordSuccess(null)
+                setPasswordForm((current) => ({
+                  ...current,
+                  confirm_password: value,
+                }))
+              }}
+              visible={showConfirmPassword}
+              onToggleVisible={() =>
+                setShowConfirmPassword((current) => !current)
+              }
+              error={
+                passwordForm.confirm_password.length > 0
+                  ? passwordValidation.confirm_password
+                  : undefined
+              }
+              autoComplete="new-password"
+            />
+
+            {passwordSuccess ? (
+              <View style={styles.successBox}>
+                <Icon
+                  name="check_circle"
+                  size={17}
+                  color={colors.success}
+                />
+                <Text style={styles.successText}>
+                  {passwordSuccess}
+                </Text>
+              </View>
+            ) : null}
+
+            {passwordError ? (
+              <View style={styles.errorBox}>
+                <Icon
+                  name="error_outline"
+                  size={17}
+                  color={colors.error}
+                />
+                <Text style={styles.errorText}>
+                  {passwordError}
+                </Text>
+              </View>
+            ) : null}
+
+            <Pressable
+              style={[
+                styles.passwordButton,
+                !canChangePassword
+                  && styles.primaryButtonDisabled,
+              ]}
+              onPress={() => void handlePasswordChange()}
+              disabled={!canChangePassword}
+            >
+              {passwordSaving ? (
+                <ActivityIndicator
+                  size="small"
+                  color={colors.white}
+                />
+              ) : (
+                <Icon
+                  name="key"
+                  size={18}
+                  color={colors.white}
+                />
+              )}
+              <Text style={styles.passwordButtonText}>
+                Modifier le mot de passe
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        {openPanel === 'payments' ? (
+          <View style={styles.mockPaymentInfo}>
+            <View style={styles.mockPaymentIcon}>
+              <Icon
+                name="credit_card"
+                size={22}
+                color="#073BDF"
+              />
+            </View>
+            <View style={styles.mockPaymentCopy}>
+              <Text style={styles.mockPaymentTitle}>
+                Paiement au moment de la commande
+              </Text>
+              <Text style={styles.mockPaymentText}>
+                PharmAI vous laisse choisir le moyen de paiement disponible pendant le checkout. Aucune carte bancaire enregistrée n’est affichée ici.
+              </Text>
+            </View>
           </View>
         ) : null}
 
         <Pressable
-          style={[
-            styles.passwordButton,
-            !canChangePassword
-              && styles.primaryButtonDisabled,
+          accessibilityRole="button"
+          style={({ pressed }) => [
+            styles.mockLogoutCard,
+            pressed && styles.mockPressed,
           ]}
-          onPress={() => void handlePasswordChange()}
-          disabled={!canChangePassword}
-        >
-          {passwordSaving ? (
-            <ActivityIndicator
-              size="small"
-              color={colors.white}
-            />
-          ) : (
-            <Icon
-              name="key"
-              size={18}
-              color={colors.white}
-            />
-          )}
-
-          <Text style={styles.passwordButtonText}>
-            Modifier le mot de passe
-          </Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.accountCard}>
-        <View style={styles.accountHeader}>
-          <View style={styles.accountIcon}>
-            <Icon
-              name="logout"
-              size={20}
-              color={colors.error}
-            />
-          </View>
-
-          <View style={styles.accountHeaderText}>
-            <Text style={styles.accountTitle}>
-              Session
-            </Text>
-            <Text style={styles.accountDescription}>
-              Déconnectez-vous de PharmAI sur cet appareil.
-            </Text>
-          </View>
-        </View>
-
-        <Pressable
-          style={styles.logoutButton}
           onPress={confirmLogout}
         >
+          <View style={styles.mockLogoutIcon}>
+            <Icon
+              name="power_settings_new"
+              size={25}
+              color="#EF3340"
+            />
+          </View>
+          <View style={styles.mockLogoutCopy}>
+            <Text style={styles.mockLogoutTitle}>
+              Se déconnecter
+            </Text>
+            <Text style={styles.mockLogoutText}>
+              Déconnectez-vous de votre compte PharmAI
+            </Text>
+          </View>
           <Icon
-            name="logout"
-            size={18}
-            color={colors.error}
+            name="chevron_right"
+            size={24}
+            color="#8491A8"
           />
-          <Text style={styles.logoutButtonText}>
-            Se déconnecter
-          </Text>
         </Pressable>
       </View>
     </ScrollView>
   )
 }
+
+
+function ProfileStat({
+  icon,
+  value,
+  title,
+  subtitle,
+  tint,
+  background,
+}: {
+  icon: string
+  value: string
+  title: string
+  subtitle: string
+  tint: string
+  background: string
+}) {
+  return (
+    <View style={styles.mockStatCard}>
+      <View
+        style={[
+          styles.mockStatIcon,
+          { backgroundColor: background },
+        ]}
+      >
+        <Icon
+          name={icon}
+          size={17}
+          color={tint}
+        />
+      </View>
+      <Text style={styles.mockStatValue}>
+        {value}
+      </Text>
+      <Text
+        style={styles.mockStatTitle}
+        numberOfLines={1}
+      >
+        {title}
+      </Text>
+      <Text
+        style={styles.mockStatSubtitle}
+        numberOfLines={1}
+      >
+        {subtitle}
+      </Text>
+    </View>
+  )
+}
+
+function ProfileMenuRow({
+  icon,
+  title,
+  subtitle,
+  onPress,
+}: {
+  icon: string
+  title: string
+  subtitle: string
+  onPress: () => void
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      style={({ pressed }) => [
+        styles.mockMenuRow,
+        pressed && styles.mockPressed,
+      ]}
+      onPress={onPress}
+    >
+      <View style={styles.mockMenuIcon}>
+        <Icon
+          name={icon}
+          size={22}
+          color="#0B5CFF"
+        />
+      </View>
+      <View style={styles.mockMenuCopy}>
+        <Text style={styles.mockMenuTitle}>
+          {title}
+        </Text>
+        <Text style={styles.mockMenuSubtitle}>
+          {subtitle}
+        </Text>
+      </View>
+      <Icon
+        name="chevron_right"
+        size={24}
+        color="#8491A8"
+      />
+    </Pressable>
+  )
+}
+
 
 function FormField({
   label,
@@ -1799,6 +1991,429 @@ function QuickLink({
 }
 
 const styles = StyleSheet.create({
+
+  mockScreen: {
+    flex: 1,
+    backgroundColor: '#F7FAFF',
+  },
+  mockContent: {
+    paddingBottom: 34,
+  },
+  mockHero: {
+    position: 'relative',
+    overflow: 'hidden',
+    minHeight: 220,
+    paddingHorizontal: 20,
+    paddingTop: 28,
+    paddingBottom: 74,
+    borderBottomLeftRadius: 36,
+    borderBottomRightRadius: 36,
+  },
+  mockHeroOrbLarge: {
+    position: 'absolute',
+    right: -72,
+    bottom: -110,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: 'rgba(255,255,255,0.11)',
+  },
+  mockHeroOrbSmall: {
+    position: 'absolute',
+    right: 122,
+    top: 88,
+    width: 116,
+    height: 116,
+    borderRadius: 58,
+    backgroundColor: 'rgba(255,255,255,0.055)',
+  },
+  mockHeroTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 14,
+  },
+  mockHeroCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  mockHeroTitle: {
+    fontSize: 34,
+    lineHeight: 40,
+    fontWeight: '900',
+    letterSpacing: -0.7,
+    color: '#FFFFFF',
+  },
+  mockHeroSubtitle: {
+    marginTop: 8,
+    maxWidth: 280,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '600',
+    color: '#EAF8FF',
+  },
+  mockSettingsButton: {
+    width: 50,
+    height: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.62)',
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.10)',
+  },
+  mockBody: {
+    marginTop: -58,
+    gap: 16,
+    paddingHorizontal: 14,
+  },
+  mockProfileCard: {
+    padding: 15,
+    borderWidth: 1,
+    borderColor: '#DFE8F4',
+    borderRadius: 26,
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#153B76',
+    shadowOffset: {
+      width: 0,
+      height: 8,
+    },
+    shadowOpacity: 0.10,
+    shadowRadius: 18,
+    elevation: 5,
+  },
+  mockIdentityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  mockAvatarWrapper: {
+    width: 92,
+    height: 92,
+  },
+  mockAvatar: {
+    width: 92,
+    height: 92,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 4,
+    borderColor: '#FFFFFF',
+    borderRadius: 46,
+    backgroundColor: '#EAF2FF',
+    shadowColor: '#0B3474',
+    shadowOffset: {
+      width: 0,
+      height: 3,
+    },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  mockAvatarImage: {
+    width: '100%',
+    height: '100%',
+  },
+  mockAvatarInitials: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: '#073BDF',
+  },
+  mockAvatarBusy: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,35,111,0.58)',
+  },
+  mockCameraButton: {
+    position: 'absolute',
+    right: -2,
+    bottom: 0,
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+    borderRadius: 18,
+    backgroundColor: '#087DFF',
+  },
+  mockIdentityCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  mockNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  mockProfileName: {
+    flexShrink: 1,
+    fontSize: 19,
+    lineHeight: 24,
+    fontWeight: '900',
+    color: '#0B1F4D',
+  },
+  mockPatientBadge: {
+    alignSelf: 'flex-start',
+    minHeight: 29,
+    marginTop: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 9,
+    borderWidth: 1,
+    borderColor: '#D4E3FF',
+    borderRadius: 10,
+    backgroundColor: '#F1F6FF',
+  },
+  mockPatientBadgeText: {
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: '900',
+    color: '#0B5CFF',
+  },
+  mockIdentityMeta: {
+    marginTop: 6,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '600',
+    color: '#526684',
+  },
+  mockStatsRow: {
+    marginTop: 15,
+    flexDirection: 'row',
+    gap: 7,
+  },
+  mockStatCard: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#E7EDF6',
+    borderRadius: 17,
+    backgroundColor: '#FFFFFF',
+  },
+  mockStatIcon: {
+    width: 31,
+    height: 31,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+  },
+  mockStatValue: {
+    marginTop: 5,
+    fontSize: 17,
+    lineHeight: 21,
+    fontWeight: '900',
+    color: '#0B1F4D',
+  },
+  mockStatTitle: {
+    marginTop: 3,
+    fontSize: 8.5,
+    lineHeight: 11,
+    fontWeight: '800',
+    textAlign: 'center',
+    color: '#34435D',
+  },
+  mockStatSubtitle: {
+    marginTop: 1,
+    fontSize: 7.5,
+    lineHeight: 10,
+    fontWeight: '600',
+    textAlign: 'center',
+    color: '#8491A8',
+  },
+  mockSectionEyebrow: {
+    marginTop: 2,
+    marginLeft: 3,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+    color: '#71809A',
+  },
+  mockMenuCard: {
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#DFE7F1',
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#153B76',
+    shadowOffset: {
+      width: 0,
+      height: 5,
+    },
+    shadowOpacity: 0.065,
+    shadowRadius: 12,
+    elevation: 3,
+  },
+  mockMenuRow: {
+    minHeight: 75,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  mockMenuIcon: {
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 15,
+    backgroundColor: '#EEF5FF',
+  },
+  mockMenuCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  mockMenuTitle: {
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '900',
+    color: '#0B1F4D',
+  },
+  mockMenuSubtitle: {
+    marginTop: 3,
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '600',
+    color: '#71809A',
+  },
+  mockMenuDivider: {
+    height: 1,
+    marginLeft: 74,
+    backgroundColor: '#E8EEF6',
+  },
+  mockExpandedCard: {
+    gap: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#DCE7F4',
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+  },
+  mockExpandedHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  mockExpandedIcon: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 13,
+    backgroundColor: '#EEF5FF',
+  },
+  mockExpandedCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  mockExpandedTitle: {
+    fontSize: 15,
+    lineHeight: 19,
+    fontWeight: '900',
+    color: '#0B1F4D',
+  },
+  mockExpandedText: {
+    marginTop: 2,
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '600',
+    color: '#71809A',
+  },
+  mockPaymentInfo: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 11,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#D7E5FA',
+    borderRadius: 20,
+    backgroundColor: '#F8FBFF',
+  },
+  mockPaymentIcon: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: '#EEF5FF',
+  },
+  mockPaymentCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  mockPaymentTitle: {
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '900',
+    color: '#0B1F4D',
+  },
+  mockPaymentText: {
+    marginTop: 4,
+    fontSize: 10,
+    lineHeight: 15,
+    fontWeight: '600',
+    color: '#657791',
+  },
+  mockLogoutCard: {
+    minHeight: 82,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: '#FED2D5',
+    borderRadius: 22,
+    backgroundColor: '#FFF7F7',
+    shadowColor: '#7F1D1D',
+    shadowOffset: {
+      width: 0,
+      height: 3,
+    },
+    shadowOpacity: 0.035,
+    shadowRadius: 8,
+    elevation: 1,
+  },
+  mockLogoutIcon: {
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 15,
+    backgroundColor: '#FFE8EA',
+  },
+  mockLogoutCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  mockLogoutTitle: {
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '900',
+    color: '#EF3340',
+  },
+  mockLogoutText: {
+    marginTop: 3,
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '600',
+    color: '#7E6570',
+  },
+  mockPressed: {
+    opacity: 0.82,
+    transform: [
+      {
+        scale: 0.995,
+      },
+    ],
+  },
+
   screen: {
     flex: 1,
     backgroundColor: colors.surface,

@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs'
 import { useFocusEffect } from '@react-navigation/native'
+import { SafeAreaView } from 'react-native-safe-area-context'
 
 import type { AppTabParamList } from './types'
 
@@ -58,7 +59,14 @@ export default function AppTabs() {
   }, [unreadCount])
 
   return (
-    <Tab.Navigator
+    <SafeAreaView
+      style={{
+        flex: 1,
+        backgroundColor: '#F7FAFF',
+      }}
+      edges={['top']}
+    >
+      <Tab.Navigator
       screenListeners={{
         state: () => {
           void loadUnreadCount()
@@ -164,5 +172,6 @@ export default function AppTabs() {
         }}
       />
     </Tab.Navigator>
+    </SafeAreaView>
   )
 }

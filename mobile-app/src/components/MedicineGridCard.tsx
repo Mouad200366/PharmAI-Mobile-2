@@ -8,6 +8,7 @@ import {
 
 import type { Medicine } from '../api/catalog'
 import { useCartStore } from '../store/cartStore'
+import { colors } from '../theme/colors'
 import Icon from './ui/Icon'
 
 type MedicineGridCardProps = {
@@ -15,8 +16,8 @@ type MedicineGridCardProps = {
   onPress?: () => void
 
   /*
-   * This permits older Dashboard props to remain temporarily.
-   * The card now manages its cart controls directly.
+   * Dashboard still passes a few historical cart props.
+   * Keep accepting them while this card owns the real cart state.
    */
   [key: string]: unknown
 }
@@ -98,14 +99,27 @@ export default function MedicineGridCard({
     )
   }
 
+  const pharmacyCount =
+    medicine.available_pharmacies_count
+
   return (
     <View style={styles.card}>
       <Pressable
         style={styles.informationArea}
         onPress={onPress}
         disabled={!onPress}
+        accessibilityRole={
+          onPress ? 'button' : undefined
+        }
+        accessibilityLabel={
+          onPress
+            ? `Voir ${medicine.name}`
+            : undefined
+        }
       >
         <View style={styles.imageContainer}>
+          <View style={styles.imageGlow} />
+
           {medicine.image ? (
             <Image
               source={{ uri: medicine.image }}
@@ -114,11 +128,13 @@ export default function MedicineGridCard({
             />
           ) : (
             <View style={styles.imageFallback}>
-              <Icon
-                name="medication"
-                size={42}
-                color="#64748b"
-              />
+              <View style={styles.fallbackIconShell}>
+                <Icon
+                  name="medication"
+                  size={34}
+                  color="#0B5CFF"
+                />
+              </View>
             </View>
           )}
 
@@ -133,14 +149,14 @@ export default function MedicineGridCard({
             <Icon
               name={
                 medicine.requires_prescription
-                  ? 'lock'
+                  ? 'description'
                   : 'verified'
               }
               size={11}
               color={
                 medicine.requires_prescription
-                  ? '#b45309'
-                  : '#15803d'
+                  ? '#B45309'
+                  : '#0A9B67'
               }
             />
 
@@ -155,7 +171,7 @@ export default function MedicineGridCard({
             >
               {medicine.requires_prescription
                 ? 'Ordonnance'
-                : 'Sans ordonnance'}
+                : 'Disponible'}
             </Text>
           </View>
         </View>
@@ -172,45 +188,17 @@ export default function MedicineGridCard({
             style={styles.genericName}
             numberOfLines={1}
           >
-            {medicine.generic_name}
+            {medicine.generic_name ||
+              medicine.manufacturer}
           </Text>
-
-          <Text
-            style={styles.manufacturer}
-            numberOfLines={1}
-          >
-            {medicine.manufacturer}
-          </Text>
-
-          <View style={styles.priceArea}>
-            {medicine.is_available &&
-            displayedPrice ? (
-              <>
-                <Text style={styles.priceLabel}>
-                  À partir de
-                </Text>
-
-                <Text style={styles.price}>
-                  {displayedPrice}
-                </Text>
-              </>
-            ) : (
-              <Text style={styles.unavailablePrice}>
-                Prix indisponible
-              </Text>
-            )}
-          </View>
 
           <View style={styles.availabilityRow}>
             <View
               style={[
                 styles.availabilityDot,
-                {
-                  backgroundColor:
-                    medicine.is_available
-                      ? '#16a34a'
-                      : '#dc2626',
-                },
+                medicine.is_available
+                  ? styles.availabilityDotAvailable
+                  : styles.availabilityDotUnavailable,
               ]}
             />
 
@@ -223,11 +211,8 @@ export default function MedicineGridCard({
               numberOfLines={1}
             >
               {medicine.is_available
-                ? `${medicine.available_pharmacies_count} pharmacie${
-                    medicine.available_pharmacies_count >
-                    1
-                      ? 's'
-                      : ''
+                ? `${pharmacyCount} pharmacie${
+                    pharmacyCount > 1 ? 's' : ''
                   }`
                 : 'Indisponible'}
             </Text>
@@ -235,53 +220,74 @@ export default function MedicineGridCard({
         </View>
       </Pressable>
 
-      <View style={styles.cartArea}>
-        {!medicine.is_available ? (
-          <View style={styles.disabledButton}>
-            <Icon
-              name="inventory_2"
-              size={16}
-              color="#94a3b8"
-            />
+      <View style={styles.bottomRow}>
+        <View style={styles.priceArea}>
+          {medicine.is_available &&
+          displayedPrice ? (
+            <>
+              <Text style={styles.priceLabel}>
+                À partir de
+              </Text>
 
-            <Text style={styles.disabledButtonText}>
-              Indisponible
+              <Text
+                style={styles.price}
+                numberOfLines={1}
+              >
+                {displayedPrice}
+              </Text>
+            </>
+          ) : (
+            <Text style={styles.unavailablePrice}>
+              Prix indisponible
             </Text>
+          )}
+        </View>
+
+        {!medicine.is_available ? (
+          <View
+            style={styles.disabledAddButton}
+            accessibilityLabel="Médicament indisponible"
+          >
+            <Icon
+              name="block"
+              size={17}
+              color="#94A3B8"
+            />
           </View>
         ) : quantity === 0 ? (
           <Pressable
-            style={styles.addButton}
+            style={({ pressed }) => [
+              styles.addButton,
+              pressed && styles.addButtonPressed,
+            ]}
             onPress={handleAdd}
+            accessibilityRole="button"
+            accessibilityLabel={`Ajouter ${medicine.name} au panier`}
           >
             <Icon
-              name="add_shopping_cart"
-              size={17}
-              color="#ffffff"
+              name="add"
+              size={22}
+              color={colors.white}
             />
-
-            <Text style={styles.addButtonText}>
-              Ajouter
-            </Text>
           </Pressable>
         ) : (
           <View style={styles.quantityControl}>
             <Pressable
               style={styles.quantityButton}
               onPress={handleDecrease}
+              accessibilityRole="button"
               accessibilityLabel="Réduire la quantité"
             >
               <Icon
                 name="remove"
-                size={18}
-                color="#00236f"
+                size={16}
+                color="#0B5CFF"
               />
             </Pressable>
 
-            <View style={styles.quantityValue}>
-              <Text style={styles.quantityText}>
-                {quantity}
-              </Text>
-            </View>
+            <Text style={styles.quantityText}>
+              {quantity}
+            </Text>
 
             <Pressable
               style={[
@@ -291,15 +297,16 @@ export default function MedicineGridCard({
               ]}
               onPress={handleIncrease}
               disabled={!canIncrease}
+              accessibilityRole="button"
               accessibilityLabel="Augmenter la quantité"
             >
               <Icon
                 name="add"
-                size={18}
+                size={16}
                 color={
                   canIncrease
-                    ? '#00236f'
-                    : '#94a3b8'
+                    ? '#0B5CFF'
+                    : '#94A3B8'
                 }
               />
             </Pressable>
@@ -315,17 +322,18 @@ const styles = StyleSheet.create({
     flex: 1,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 16,
-    backgroundColor: '#ffffff',
-    shadowColor: '#0f172a',
+    borderColor: '#E1EAF6',
+    borderRadius: 19,
+    backgroundColor: colors.white,
+
+    shadowColor: '#12366F',
     shadowOffset: {
       width: 0,
-      height: 2,
+      height: 5,
     },
-    shadowOpacity: 0.07,
-    shadowRadius: 6,
-    elevation: 2,
+    shadowOpacity: 0.08,
+    shadowRadius: 13,
+    elevation: 3,
   },
 
   informationArea: {
@@ -334,13 +342,25 @@ const styles = StyleSheet.create({
 
   imageContainer: {
     position: 'relative',
-    height: 130,
-    backgroundColor: '#f8fafc',
+    height: 124,
+    overflow: 'hidden',
+    backgroundColor: '#F8FBFF',
+  },
+
+  imageGlow: {
+    position: 'absolute',
+    top: 11,
+    right: 7,
+    width: 78,
+    height: 78,
+    borderRadius: 45,
+    backgroundColor: '#22D3EE12',
   },
 
   image: {
     width: '100%',
     height: '100%',
+    marginTop: 3,
   },
 
   imageFallback: {
@@ -349,188 +369,213 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
+  fallbackIconShell: {
+    width: 66,
+    height: 66,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: '#D7E8FF',
+    backgroundColor: '#EEF6FF',
+  },
+
   prescriptionBadge: {
     position: 'absolute',
-    top: 8,
-    left: 8,
+    top: 9,
+    left: 9,
     maxWidth: '88%',
+    minHeight: 26,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 7,
-    paddingVertical: 4,
-    borderRadius: 999,
+    gap: 4,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    borderWidth: 1,
   },
 
   prescriptionRequired: {
-    borderWidth: 1,
-    borderColor: '#fde68a',
-    backgroundColor: '#fffbeb',
+    borderColor: '#FDE7A8',
+    backgroundColor: '#FFFBEBEE',
   },
 
   noPrescription: {
-    borderWidth: 1,
-    borderColor: '#bbf7d0',
-    backgroundColor: '#f0fdf4',
+    borderColor: '#B9F0D5',
+    backgroundColor: '#F0FDF8EE',
   },
 
   prescriptionText: {
     flexShrink: 1,
-    fontSize: 10,
-    fontWeight: '700',
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '800',
   },
 
   prescriptionRequiredText: {
-    color: '#b45309',
+    color: '#9A5B08',
   },
 
   noPrescriptionText: {
-    color: '#15803d',
+    color: '#087A55',
   },
 
   content: {
-    paddingHorizontal: 11,
+    paddingHorizontal: 12,
     paddingTop: 11,
-    paddingBottom: 8,
+    paddingBottom: 6,
   },
 
   name: {
-    minHeight: 40,
-    color: '#0f172a',
-    fontSize: 15,
-    fontWeight: '800',
-    lineHeight: 20,
+    minHeight: 38,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '900',
+    letterSpacing: -0.2,
+    color: '#0B1F4D',
   },
 
   genericName: {
-    marginTop: 2,
-    color: '#475569',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-
-  manufacturer: {
     marginTop: 3,
-    color: '#94a3b8',
     fontSize: 10,
-  },
-
-  priceArea: {
-    minHeight: 48,
-    justifyContent: 'flex-end',
-    marginTop: 10,
-  },
-
-  priceLabel: {
-    color: '#64748b',
-    fontSize: 10,
-  },
-
-  price: {
-    marginTop: 1,
-    color: '#00236f',
-    fontSize: 17,
-    fontWeight: '900',
-  },
-
-  unavailablePrice: {
-    color: '#94a3b8',
-    fontSize: 13,
-    fontWeight: '700',
+    lineHeight: 14,
+    fontWeight: '600',
+    color: '#71809A',
   },
 
   availabilityRow: {
+    marginTop: 8,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    marginTop: 7,
   },
 
   availabilityDot: {
     width: 7,
     height: 7,
-    borderRadius: 999,
+    borderRadius: 4,
+  },
+
+  availabilityDotAvailable: {
+    backgroundColor: '#12B981',
+  },
+
+  availabilityDotUnavailable: {
+    backgroundColor: '#EF4444',
   },
 
   availabilityText: {
     flex: 1,
-    color: '#15803d',
-    fontSize: 10,
-    fontWeight: '700',
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '800',
+    color: '#13855F',
   },
 
   unavailableText: {
-    color: '#dc2626',
+    color: '#C24141',
   },
 
-  cartArea: {
-    paddingHorizontal: 10,
-    paddingTop: 3,
-    paddingBottom: 10,
+  bottomRow: {
+    minHeight: 67,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingTop: 7,
+    paddingBottom: 12,
+  },
+
+  priceArea: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  priceLabel: {
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '600',
+    color: '#8491A8',
+  },
+
+  price: {
+    marginTop: 1,
+    fontSize: 15,
+    lineHeight: 19,
+    fontWeight: '900',
+    letterSpacing: -0.2,
+    color: '#0B5CFF',
+  },
+
+  unavailablePrice: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700',
+    color: '#94A3B8',
   },
 
   addButton: {
-    minHeight: 38,
-    flexDirection: 'row',
+    width: 39,
+    height: 39,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    borderRadius: 10,
-    backgroundColor: '#00236f',
+    borderRadius: 13,
+    backgroundColor: '#0B5CFF',
+
+    shadowColor: '#0B5CFF',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 3,
   },
 
-  addButtonText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '800',
+  addButtonPressed: {
+    opacity: 0.86,
+    transform: [
+      {
+        scale: 0.96,
+      },
+    ],
   },
 
-  disabledButton: {
-    minHeight: 38,
-    flexDirection: 'row',
+  disabledAddButton: {
+    width: 39,
+    height: 39,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 5,
-    borderRadius: 10,
-    backgroundColor: '#f1f5f9',
-  },
-
-  disabledButtonText: {
-    color: '#94a3b8',
-    fontSize: 11,
-    fontWeight: '700',
+    borderRadius: 13,
+    backgroundColor: '#F1F5F9',
   },
 
   quantityControl: {
-    minHeight: 38,
+    height: 39,
     flexDirection: 'row',
+    alignItems: 'center',
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#cbd5e1',
-    borderRadius: 10,
-    backgroundColor: '#ffffff',
+    borderColor: '#D6E5FA',
+    borderRadius: 13,
+    backgroundColor: '#F8FBFF',
   },
 
   quantityButton: {
-    width: 38,
+    width: 31,
+    height: 39,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#eff6ff',
   },
 
   quantityButtonDisabled: {
-    backgroundColor: '#f1f5f9',
-  },
-
-  quantityValue: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
   },
 
   quantityText: {
-    color: '#0f172a',
-    fontSize: 14,
-    fontWeight: '800',
+    minWidth: 21,
+    textAlign: 'center',
+    fontSize: 12,
+    fontWeight: '900',
+    color: '#0B1F4D',
   },
 })

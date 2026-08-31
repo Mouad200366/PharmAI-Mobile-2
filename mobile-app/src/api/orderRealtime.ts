@@ -26,6 +26,7 @@ export interface OrderLocationUpdateEvent {
   distance_to_customer_m?: number | null
   eta_minutes?: number | null
   status?: OrderStatus
+  location_updated_at?: string | null
 }
 
 export type OrderTrackingEvent =
@@ -129,6 +130,9 @@ export function parseOrderTrackingEvent(
       status: isOrderStatus(parsed.status)
         ? parsed.status
         : undefined,
+      location_updated_at: optionalString(
+        parsed.location_updated_at,
+      ),
     }
   }
 
@@ -196,6 +200,16 @@ function optionalNumber(value: unknown) {
   }
 
   return isFiniteNumber(value)
+    ? value
+    : undefined
+}
+
+function optionalString(value: unknown) {
+  if (value === null) {
+    return null
+  }
+
+  return typeof value === 'string'
     ? value
     : undefined
 }

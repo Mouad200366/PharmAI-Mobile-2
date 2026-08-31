@@ -1,8 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useState,
-} from 'react'
+// CHECKOUT_APPROVED_MOCKUP_1_V1
 import {
   ActivityIndicator,
   Image,
@@ -13,6 +9,13 @@ import {
   TextInput,
   View,
 } from 'react-native'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from 'react'
 import * as ImagePicker from 'expo-image-picker'
 import {
   useFocusEffect,
@@ -20,6 +23,9 @@ import {
 import type {
   NativeStackScreenProps,
 } from '@react-navigation/native-stack'
+import { LinearGradient } from 'expo-linear-gradient'
+import { StatusBar } from 'expo-status-bar'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import type {
   MainStackParamList,
@@ -41,36 +47,27 @@ import {
   firstError,
 } from '../../api/errors'
 import Icon from '../../components/ui/Icon'
-import {
-  colors,
-} from '../../theme/colors'
 
-type Props =
-  NativeStackScreenProps<
-    MainStackParamList,
-    'Checkout'
-  >
+type Props = NativeStackScreenProps<
+  MainStackParamList,
+  'Checkout'
+>
+
+type CheckoutStep = 1 | 2
 
 const DELIVERY_FEE = 15
-const MAX_PRESCRIPTION_FILE_SIZE = 10 * 1024 * 1024
+const MAX_PRESCRIPTION_FILE_SIZE =
+  10 * 1024 * 1024
 
-const PRESCRIPTION_OPTIONS: {
-  value: PrescriptionMode
-  label: string
-}[] = [
-  {
-    value: 'none',
-    label: 'Aucune',
-  },
-  {
-    value: 'photo',
-    label: 'Photo',
-  },
-  {
-    value: 'pickup',
-    label: 'À la livraison',
-  },
-]
+const NAVY = '#00236f'
+const BLUE = '#073bdf'
+const BRIGHT_BLUE = '#087dff'
+const CYAN = '#10d1d0'
+const TEXT = '#0b1f4d'
+const MUTED = '#6b7c96'
+const BORDER = '#dfe8f4'
+const SURFACE = '#f7faff'
+const GREEN = '#10a66a'
 
 function getMedicinePrice(
   price: string | null | undefined,
@@ -94,17 +91,13 @@ function getMedicinePrice(
   return numericPrice
 }
 
-function formatPrice(
-  value: number,
-) {
+function formatPrice(value: number) {
   return `${value
     .toFixed(2)
     .replace('.', ',')} MAD`
 }
 
-function getFileExtension(
-  uri: string,
-) {
+function getFileExtension(uri: string) {
   const cleanUri = uri.split('?')[0]
   const extension = cleanUri
     .split('.')
@@ -123,9 +116,7 @@ function getFileExtension(
   return 'jpg'
 }
 
-function getMimeType(
-  extension: string,
-) {
+function getMimeType(extension: string) {
   if (extension === 'png') {
     return 'image/png'
   }
@@ -147,7 +138,8 @@ function getMimeType(
 function createPrescriptionPhoto(
   asset: ImagePicker.ImagePickerAsset,
 ): PrescriptionPhotoUpload {
-  const extension = getFileExtension(asset.uri)
+  const extension =
+    getFileExtension(asset.uri)
 
   return {
     uri: asset.uri,
@@ -160,13 +152,34 @@ function createPrescriptionPhoto(
   }
 }
 
+function hasGps(address: Address | null) {
+  return Boolean(
+    address &&
+      address.latitude !== null &&
+      address.latitude !== undefined &&
+      address.longitude !== null &&
+      address.longitude !== undefined,
+  )
+}
+
 export default function Checkout({
   navigation,
 }: Props) {
+  const insets = useSafeAreaInsets()
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerShown: false,
+    })
+  }, [navigation])
+
   const {
     items,
     clearCart,
   } = useCartStore()
+
+  const [step, setStep] =
+    useState<CheckoutStep>(1)
 
   const [
     addresses,
@@ -184,16 +197,6 @@ export default function Checkout({
   ] = useState<Address | null>(null)
 
   const [
-    customAddress,
-    setCustomAddress,
-  ] = useState('')
-
-  const [
-    useCustom,
-    setUseCustom,
-  ] = useState(false)
-
-  const [
     prescriptionMode,
     setPrescriptionMode,
   ] =
@@ -203,7 +206,9 @@ export default function Checkout({
     prescriptionPhoto,
     setPrescriptionPhoto,
   ] =
-    useState<PrescriptionPhotoUpload | null>(null)
+    useState<PrescriptionPhotoUpload | null>(
+      null,
+    )
 
   const [
     imagePicking,
@@ -257,7 +262,7 @@ export default function Checkout({
 
           setSelectedAddress(
             (currentAddress) => {
-              const existingAddress =
+              const existing =
                 nextAddresses.find(
                   (address) =>
                     address.id ===
@@ -265,16 +270,12 @@ export default function Checkout({
                 )
 
               return (
-                existingAddress ??
+                existing ??
                 defaultAddress ??
                 nextAddresses[0] ??
                 null
               )
             },
-          )
-
-          setUseCustom(
-            nextAddresses.length === 0,
           )
         })
         .catch(() => {
@@ -284,7 +285,6 @@ export default function Checkout({
 
           setAddresses([])
           setSelectedAddress(null)
-          setUseCustom(true)
         })
         .finally(() => {
           if (isActive) {
@@ -322,10 +322,14 @@ export default function Checkout({
   ])
 
   const hasPrescriptionItem =
-    items.some(
-      (item) =>
-        item.medicine
-          .requires_prescription,
+    useMemo(
+      () =>
+        items.some(
+          (item) =>
+            item.medicine
+              .requires_prescription,
+        ),
+      [items],
     )
 
   useEffect(() => {
@@ -377,9 +381,19 @@ export default function Checkout({
       0,
     )
 
+  const itemCount =
+    items.reduce(
+      (total, item) =>
+        total + item.quantity,
+      0,
+    )
+
   const estimatedTotal =
     estimatedSubtotal +
     DELIVERY_FEE
+
+  const addressReady =
+    hasGps(selectedAddress)
 
   function acceptPickedPhoto(
     asset: ImagePicker.ImagePickerAsset,
@@ -509,34 +523,78 @@ export default function Checkout({
     }
   }
 
-  async function handleSubmit() {
+  function validateStepOne() {
     setError('')
 
     if (hasInvalidPricing) {
       setError(
         'Un médicament est indisponible ou ne possède pas de prix valide. Retournez au panier pour le retirer.',
       )
-      return
-    }
-
-    if (useCustom) {
-      if (!customAddress.trim()) {
-        setError(
-          'Veuillez saisir une adresse de livraison.',
-        )
-        return
-      }
-
-      setError(
-        "Cette adresse ne possède pas de localisation GPS. Veuillez l'ajouter dans vos adresses enregistrées avant de commander.",
-      )
-      return
+      return false
     }
 
     if (!selectedAddress) {
       setError(
         'Veuillez sélectionner une adresse de livraison.',
       )
+      return false
+    }
+
+    if (!addressReady) {
+      setError(
+        "Cette adresse ne possède pas de localisation GPS. Veuillez la modifier depuis l'écran des adresses.",
+      )
+      return false
+    }
+
+    if (
+      hasPrescriptionItem &&
+      prescriptionMode === 'none'
+    ) {
+      setError(
+        'Certains médicaments nécessitent une ordonnance. Sélectionnez un mode de transmission.',
+      )
+      return false
+    }
+
+    if (
+      prescriptionMode === 'photo' &&
+      !prescriptionPhoto
+    ) {
+      setError(
+        "Ajoutez une photo lisible de l'ordonnance ou choisissez la remise à la livraison.",
+      )
+      return false
+    }
+
+    return true
+  }
+
+  function goToPaymentStep() {
+    if (!validateStepOne()) {
+      return
+    }
+
+    setStep(2)
+  }
+
+  async function handleSubmit() {
+    setError('')
+
+    if (!validateStepOne()) {
+      setStep(1)
+      return
+    }
+
+    if (paymentMethod === 'card') {
+      setError(
+        'Le paiement par carte sera disponible prochainement. Choisissez le paiement en espèces.',
+      )
+      return
+    }
+
+    if (!selectedAddress) {
+      setStep(1)
       return
     }
 
@@ -555,33 +613,7 @@ export default function Checkout({
       setError(
         "Cette adresse ne possède pas de localisation GPS. Veuillez la modifier depuis l'écran des adresses.",
       )
-      return
-    }
-
-    if (
-      hasPrescriptionItem &&
-      prescriptionMode === 'none'
-    ) {
-      setError(
-        'Certains médicaments nécessitent une ordonnance. Sélectionnez un mode de transmission.',
-      )
-      return
-    }
-
-    if (
-      prescriptionMode === 'photo' &&
-      !prescriptionPhoto
-    ) {
-      setError(
-        "Ajoutez une photo lisible de l'ordonnance ou choisissez la remise à la livraison.",
-      )
-      return
-    }
-
-    if (paymentMethod === 'card') {
-      setError(
-        'Le paiement par carte sera disponible prochainement. Choisissez le paiement en espèces.',
-      )
+      setStep(1)
       return
     }
 
@@ -597,29 +629,22 @@ export default function Checkout({
             (item) => ({
               medicine:
                 item.medicine.id,
-
               quantity:
                 item.quantity,
             }),
           ),
-
           delivery_address:
             deliveryAddress,
-
           latitude,
           longitude,
-
           prescription_mode:
             prescriptionMode,
-
           payment_method:
             paymentMethod,
-
           prescription_photo:
             prescriptionMode === 'photo'
               ? prescriptionPhoto
               : null,
-
           notes:
             notes.trim() ||
             undefined,
@@ -644,1874 +669,2363 @@ export default function Checkout({
   }
 
   return (
-    <ScrollView
-      style={styles.screen}
-      contentContainerStyle={
-        styles.content
-      }
-      showsVerticalScrollIndicator={
-        false
-      }
-      keyboardShouldPersistTaps="handled"
-    >
-      <Text style={styles.title}>
-        Confirmer la commande
-      </Text>
+    <View style={styles.screen}>
+      <StatusBar style="light" />
 
-      {/* Order summary */}
-      <View style={styles.card}>
-        <View
-          style={styles.sectionHeader}
+      <ScrollView
+        contentContainerStyle={[
+          styles.content,
+          {
+            paddingBottom:
+              138 +
+              Math.max(insets.bottom, 10),
+          },
+        ]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        <LinearGradient
+          colors={[
+            NAVY,
+            BLUE,
+            BRIGHT_BLUE,
+            CYAN,
+          ]}
+          start={{ x: 0, y: 0.08 }}
+          end={{ x: 1, y: 0.9 }}
+          style={[
+            styles.hero,
+            {
+              paddingTop:
+                insets.top + 12,
+            },
+          ]}
         >
-          <Icon
-            name="receipt"
-            size={18}
-            color={colors.primary}
-          />
+          <View style={styles.heroHeader}>
+            <Pressable
+              style={styles.backButton}
+              onPress={() => {
+                if (step === 2) {
+                  setStep(1)
+                  setError('')
+                  return
+                }
 
-          <Text
-            style={styles.sectionTitle}
-          >
-            Récapitulatif
-          </Text>
-        </View>
+                navigation.goBack()
+              }}
+            >
+              <Icon
+                name="arrow_back"
+                size={21}
+                color="#ffffff"
+              />
+            </Pressable>
 
-        <View
-          style={styles.summaryList}
-        >
-          {items.map(
-            ({
-              medicine,
-              quantity,
-            }) => {
-              const unitPrice =
-                getMedicinePrice(
-                  medicine.min_price,
-                )
+            <View style={styles.heroTitleArea}>
+              <Text style={styles.heroTitle}>
+                Confirmer la commande
+              </Text>
 
-              const lineTotal =
-                unitPrice === null
-                  ? null
-                  : unitPrice *
-                    quantity
+              <Text style={styles.heroSubtitle}>
+                Étape {step} sur 3
+              </Text>
+            </View>
+
+            <View style={styles.secureIcon}>
+              <Icon
+                name="lock"
+                size={20}
+                color="#ffffff"
+              />
+            </View>
+          </View>
+        </LinearGradient>
+
+        <View style={styles.progressCard}>
+          {[
+            {
+              number: 1,
+              label: 'Livraison',
+            },
+            {
+              number: 2,
+              label: 'Paiement',
+            },
+            {
+              number: 3,
+              label: 'Confirmation',
+            },
+          ].map(
+            (
+              progressStep,
+              index,
+            ) => {
+              const complete =
+                step >
+                progressStep.number
+
+              const active =
+                step ===
+                progressStep.number
 
               return (
                 <View
-                  key={medicine.id}
+                  key={
+                    progressStep.number
+                  }
                   style={
-                    styles.summaryRow
+                    styles.progressItem
                   }
                 >
                   <View
-                    style={
-                      styles.summaryLeft
+                    style={[
+                      styles.progressCircle,
+                      (active ||
+                        complete) &&
+                        styles.progressCircleActive,
+                    ]}
+                  >
+                    {complete ? (
+                      <Icon
+                        name="check"
+                        size={16}
+                        color="#ffffff"
+                      />
+                    ) : (
+                      <Text
+                        style={[
+                          styles.progressNumber,
+                          active &&
+                            styles.progressNumberActive,
+                        ]}
+                      >
+                        {
+                          progressStep.number
+                        }
+                      </Text>
+                    )}
+                  </View>
+
+                  <Text
+                    style={[
+                      styles.progressLabel,
+                      (active ||
+                        complete) &&
+                        styles.progressLabelActive,
+                    ]}
+                  >
+                    {
+                      progressStep.label
+                    }
+                  </Text>
+
+                  {index < 2 ? (
+                    <View
+                      style={[
+                        styles.progressLine,
+                        complete &&
+                          styles.progressLineActive,
+                      ]}
+                    />
+                  ) : null}
+                </View>
+              )
+            },
+          )}
+        </View>
+
+        {step === 1 ? (
+          <>
+            <View style={styles.sectionCard}>
+              <View style={styles.sectionHeader}>
+                <View style={styles.sectionIcon}>
+                  <Icon
+                    name="location_on"
+                    size={21}
+                    color={BLUE}
+                  />
+                </View>
+
+                <Text style={styles.sectionTitle}>
+                  Adresse de livraison
+                </Text>
+
+                <Pressable
+                  onPress={() =>
+                    navigation.navigate(
+                      'Addresses',
+                    )
+                  }
+                >
+                  <Text style={styles.linkText}>
+                    Modifier
+                  </Text>
+                </Pressable>
+              </View>
+
+              {addressesLoading ? (
+                <View style={styles.loadingRow}>
+                  <ActivityIndicator
+                    size="small"
+                    color={BLUE}
+                  />
+                  <Text style={styles.loadingText}>
+                    Chargement des adresses…
+                  </Text>
+                </View>
+              ) : addresses.length === 0 ? (
+                <Pressable
+                  style={styles.emptyAddressCard}
+                  onPress={() =>
+                    navigation.navigate(
+                      'Addresses',
+                    )
+                  }
+                >
+                  <View
+                    style={styles.addressIcon}
+                  >
+                    <Icon
+                      name="add_location_alt"
+                      size={25}
+                      color={BLUE}
+                    />
+                  </View>
+
+                  <View style={styles.addressInfo}>
+                    <Text style={styles.addressTitle}>
+                      Ajouter une adresse
+                    </Text>
+
+                    <Text style={styles.addressSubtitle}>
+                      Une adresse enregistrée avec GPS
+                      est nécessaire pour commander.
+                    </Text>
+                  </View>
+
+                  <Icon
+                    name="chevron_right"
+                    size={22}
+                    color="#8090a7"
+                  />
+                </Pressable>
+              ) : (
+                <>
+                  <Pressable
+                    style={styles.selectedAddressCard}
+                    onPress={() =>
+                      navigation.navigate(
+                        'Addresses',
+                      )
                     }
                   >
                     <View
-                      style={
-                        styles.summaryIcon
-                      }
+                      style={styles.addressIcon}
                     >
                       <Icon
-                        name="medication"
-                        size={16}
-                        color={
-                          colors.accentLight
-                        }
+                        name="home"
+                        size={24}
+                        color={BLUE}
                       />
                     </View>
 
-                    <View
-                      style={
-                        styles.summaryInformation
-                      }
-                    >
-                      <Text
-                        style={
-                          styles.summaryName
-                        }
-                        numberOfLines={1}
+                    <View style={styles.addressInfo}>
+                      <View
+                        style={styles.addressTitleRow}
                       >
-                        {medicine.name}
-                      </Text>
-
-                      {!!medicine.generic_name && (
                         <Text
-                          style={
-                            styles.summaryGeneric
-                          }
+                          style={styles.addressTitle}
                           numberOfLines={1}
                         >
-                          {
-                            medicine.generic_name
-                          }
+                          {selectedAddress?.label ||
+                            'Adresse'}
                         </Text>
+
+                        {selectedAddress?.is_default ? (
+                          <View
+                            style={styles.defaultBadge}
+                          >
+                            <Text
+                              style={
+                                styles.defaultBadgeText
+                              }
+                            >
+                              Adresse actuelle
+                            </Text>
+                          </View>
+                        ) : null}
+                      </View>
+
+                      <Text
+                        style={styles.addressSubtitle}
+                        numberOfLines={2}
+                      >
+                        {selectedAddress
+                          ? `${selectedAddress.street}, ${selectedAddress.city}${selectedAddress.postal_code ? ` ${selectedAddress.postal_code}` : ''}`
+                          : 'Sélectionnez une adresse'}
+                      </Text>
+
+                      <View
+                        style={styles.gpsRow}
+                      >
+                        <Icon
+                          name={
+                            addressReady
+                              ? 'check_circle'
+                              : 'warning'
+                          }
+                          size={15}
+                          color={
+                            addressReady
+                              ? GREEN
+                              : '#c45b16'
+                          }
+                        />
+
+                        <Text
+                          style={[
+                            styles.gpsText,
+                            !addressReady &&
+                              styles.gpsTextWarning,
+                          ]}
+                        >
+                          {addressReady
+                            ? 'Localisation GPS vérifiée'
+                            : 'Coordonnées GPS requises'}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <Icon
+                      name="chevron_right"
+                      size={22}
+                      color="#8090a7"
+                    />
+                  </Pressable>
+
+                  {addresses.length > 1 ? (
+                    <View
+                      style={styles.addressChips}
+                    >
+                      {addresses.map(
+                        (address) => {
+                          const selected =
+                            address.id ===
+                            selectedAddress?.id
+
+                          return (
+                            <Pressable
+                              key={address.id}
+                              style={[
+                                styles.addressChip,
+                                selected &&
+                                  styles.addressChipSelected,
+                              ]}
+                              onPress={() => {
+                                setSelectedAddress(
+                                  address,
+                                )
+                                setError('')
+                              }}
+                            >
+                              <Text
+                                style={[
+                                  styles.addressChipText,
+                                  selected &&
+                                    styles.addressChipTextSelected,
+                                ]}
+                                numberOfLines={1}
+                              >
+                                {address.label ||
+                                  address.city}
+                              </Text>
+                            </Pressable>
+                          )
+                        },
                       )}
+                    </View>
+                  ) : null}
+
+                  <Pressable
+                    style={styles.addAddressButton}
+                    onPress={() =>
+                      navigation.navigate(
+                        'Addresses',
+                      )
+                    }
+                  >
+                    <Icon
+                      name="add"
+                      size={19}
+                      color={BLUE}
+                    />
+
+                    <Text
+                      style={styles.addAddressText}
+                    >
+                      Ajouter une nouvelle adresse
+                    </Text>
+                  </Pressable>
+                </>
+              )}
+            </View>
+
+            <View style={styles.sectionCard}>
+              <View style={styles.sectionHeader}>
+                <View style={styles.sectionIcon}>
+                  <Icon
+                    name="local_shipping"
+                    size={21}
+                    color={BLUE}
+                  />
+                </View>
+
+                <Text style={styles.sectionTitle}>
+                  Mode de livraison
+                </Text>
+              </View>
+
+              <View style={styles.deliveryCard}>
+                <View style={styles.radioSelected}>
+                  <View
+                    style={styles.radioSelectedInner}
+                  />
+                </View>
+
+                <View style={styles.deliveryIcon}>
+                  <Icon
+                    name="local_shipping"
+                    size={24}
+                    color={BLUE}
+                  />
+                </View>
+
+                <View style={styles.deliveryInfo}>
+                  <Text style={styles.deliveryTitle}>
+                    Livraison à domicile
+                  </Text>
+
+                  <Text
+                    style={styles.deliverySubtitle}
+                  >
+                    Livraison à l’adresse GPS sélectionnée
+                  </Text>
+                </View>
+
+                <Text style={styles.deliveryPrice}>
+                  {formatPrice(
+                    DELIVERY_FEE,
+                  )}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.sectionCard}>
+              <View style={styles.sectionHeader}>
+                <View style={styles.sectionIcon}>
+                  <Icon
+                    name="assignment"
+                    size={21}
+                    color={BLUE}
+                  />
+                </View>
+
+                <Text style={styles.sectionTitle}>
+                  Ordonnance
+                </Text>
+
+                {hasPrescriptionItem ? (
+                  <View
+                    style={styles.requiredBadge}
+                  >
+                    <Text
+                      style={styles.requiredBadgeText}
+                    >
+                      Requise
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+
+              {hasPrescriptionItem ? (
+                <>
+                  <View style={styles.infoNotice}>
+                    <Icon
+                      name="info"
+                      size={19}
+                      color={BLUE}
+                    />
+
+                    <Text
+                      style={styles.infoNoticeText}
+                    >
+                      Certains médicaments de votre
+                      panier nécessitent une ordonnance
+                      valide.
+                    </Text>
+                  </View>
+
+                  <View
+                    style={styles.modeSelector}
+                  >
+                    <Pressable
+                      style={[
+                        styles.modeOption,
+                        prescriptionMode ===
+                          'photo' &&
+                          styles.modeOptionActive,
+                      ]}
+                      onPress={() =>
+                        selectPrescriptionMode(
+                          'photo',
+                        )
+                      }
+                    >
+                      <Icon
+                        name="photo_camera"
+                        size={18}
+                        color={
+                          prescriptionMode ===
+                          'photo'
+                            ? BLUE
+                            : '#7a8799'
+                        }
+                      />
 
                       <Text
                         style={[
-                          styles.summaryUnitPrice,
-
-                          unitPrice === null &&
-                            styles.priceUnavailable,
+                          styles.modeOptionText,
+                          prescriptionMode ===
+                            'photo' &&
+                            styles.modeOptionTextActive,
                         ]}
                       >
-                        {unitPrice === null
-                          ? 'Prix indisponible'
-                          : `${formatPrice(
-                              unitPrice,
-                            )} l’unité`}
+                        Photo
                       </Text>
-                    </View>
-                  </View>
+                    </Pressable>
 
-                  <View
-                    style={
-                      styles.summaryRight
-                    }
-                  >
-                    <Text
-                      style={
-                        styles.summaryQty
+                    <Pressable
+                      style={[
+                        styles.modeOption,
+                        prescriptionMode ===
+                          'pickup' &&
+                          styles.modeOptionActive,
+                      ]}
+                      onPress={() =>
+                        selectPrescriptionMode(
+                          'pickup',
+                        )
                       }
                     >
-                      × {quantity}
-                    </Text>
+                      <Icon
+                        name="inventory_2"
+                        size={18}
+                        color={
+                          prescriptionMode ===
+                          'pickup'
+                            ? BLUE
+                            : '#7a8799'
+                        }
+                      />
 
-                    <Text
-                      style={[
-                        styles.summaryLineTotal,
-
-                        lineTotal === null &&
-                          styles.priceUnavailable,
-                      ]}
-                    >
-                      {lineTotal === null
-                        ? '—'
-                        : formatPrice(
-                            lineTotal,
-                          )}
-                    </Text>
+                      <Text
+                        style={[
+                          styles.modeOptionText,
+                          prescriptionMode ===
+                            'pickup' &&
+                            styles.modeOptionTextActive,
+                        ]}
+                      >
+                        À la livraison
+                      </Text>
+                    </Pressable>
                   </View>
-                </View>
-              )
-            },
-          )}
-        </View>
 
-        <View
-          style={styles.pricingDivider}
-        />
-
-        <View
-          style={styles.pricingRow}
-        >
-          <Text
-            style={styles.pricingLabel}
-          >
-            Sous-total estimé
-          </Text>
-
-          <Text
-            style={styles.pricingValue}
-          >
-            {formatPrice(
-              estimatedSubtotal,
-            )}
-          </Text>
-        </View>
-
-        <View
-          style={styles.pricingRow}
-        >
-          <Text
-            style={styles.pricingLabel}
-          >
-            Frais de livraison
-          </Text>
-
-          <Text
-            style={styles.pricingValue}
-          >
-            {formatPrice(
-              DELIVERY_FEE,
-            )}
-          </Text>
-        </View>
-
-        <View
-          style={
-            styles.pricingTotalRow
-          }
-        >
-          <View style={styles.totalInfo}>
-            <Text
-              style={
-                styles.pricingTotalLabel
-              }
-            >
-              Total estimé
-            </Text>
-
-            <Text
-              style={
-                styles.pricingNotice
-              }
-            >
-              Le montant final dépend
-              de la pharmacie
-              sélectionnée.
-            </Text>
-          </View>
-
-          <Text
-            style={
-              styles.pricingTotalValue
-            }
-          >
-            {formatPrice(
-              estimatedTotal,
-            )}
-          </Text>
-        </View>
-
-        <Text
-          style={styles.summaryFootnote}
-        >
-          Les prix affichés correspondent
-          aux prix minimums actuellement
-          disponibles. Le prix final sera
-          confirmé après la sélection de
-          la pharmacie.
-        </Text>
-      </View>
-
-      {/* Address */}
-      <View style={styles.card}>
-        <View
-          style={styles.sectionHeader}
-        >
-          <Icon
-            name="location_on"
-            size={18}
-            color={colors.primary}
-          />
-
-          <Text
-            style={styles.sectionTitle}
-          >
-            Adresse de livraison
-          </Text>
-        </View>
-
-        {addressesLoading ? (
-          <View
-            style={
-              styles.addressLoading
-            }
-          >
-            <ActivityIndicator
-              color={colors.primary}
-            />
-
-            <Text
-              style={
-                styles.addressLoadingText
-              }
-            >
-              Chargement des adresses…
-            </Text>
-          </View>
-        ) : (
-          <>
-            {addresses.length > 0 &&
-              !useCustom && (
-                <View
-                  style={
-                    styles.addressList
-                  }
-                >
-                  {addresses.map(
-                    (address) => {
-                      const active =
-                        selectedAddress?.id ===
-                        address.id
-
-                      const hasCoordinates =
-                        address.latitude !==
-                          null &&
-                        address.latitude !==
-                          undefined &&
-                        address.longitude !==
-                          null &&
-                        address.longitude !==
-                          undefined
-
-                      return (
-                        <Pressable
-                          key={
-                            address.id
-                          }
-                          style={[
-                            styles.addressOption,
-
-                            active &&
-                              styles.addressOptionActive,
-                          ]}
-                          onPress={() => {
-                            setError('')
-
-                            setSelectedAddress(
-                              address,
-                            )
-                          }}
+                  {prescriptionMode ===
+                  'photo' ? (
+                    prescriptionPhoto ? (
+                      <View
+                        style={
+                          styles.uploadedPrescriptionCard
+                        }
+                      >
+                        <View
+                          style={styles.uploadedIcon}
                         >
-                          <View
-                            style={[
-                              styles.radio,
+                          <Icon
+                            name="check"
+                            size={20}
+                            color="#ffffff"
+                          />
+                        </View>
 
-                              active &&
-                                styles.radioActive,
-                            ]}
-                          >
-                            {active && (
-                              <View
-                                style={
-                                  styles.radioDot
-                                }
-                              />
-                            )}
-                          </View>
-
-                          <View
+                        <View
+                          style={styles.uploadedInfo}
+                        >
+                          <Text
                             style={
-                              styles.addressInformation
+                              styles.uploadedTitle
                             }
                           >
-                            <View
-                              style={
-                                styles.addressLabelRow
-                              }
-                            >
-                              <Text
-                                style={
-                                  styles.addressLabel
-                                }
-                              >
-                                {
-                                  address.label
-                                }
-                              </Text>
+                            Ordonnance ajoutée
+                          </Text>
 
-                              {address.is_default && (
-                                <View
-                                  style={
-                                    styles.defaultBadge
-                                  }
-                                >
-                                  <Text
-                                    style={
-                                      styles.defaultBadgeText
-                                    }
-                                  >
-                                    Par défaut
-                                  </Text>
-                                </View>
-                              )}
-                            </View>
+                          <Text
+                            style={
+                              styles.uploadedFilename
+                            }
+                            numberOfLines={1}
+                          >
+                            {prescriptionPhoto.name}
+                          </Text>
+                        </View>
+
+                        <Pressable
+                          style={styles.replaceButton}
+                          onPress={() => {
+                            void choosePrescriptionPhoto()
+                          }}
+                          disabled={
+                            imagePicking
+                          }
+                        >
+                          <Text
+                            style={
+                              styles.replaceButtonText
+                            }
+                          >
+                            Remplacer
+                          </Text>
+                        </Pressable>
+                      </View>
+                    ) : (
+                      <View style={styles.uploadArea}>
+                        <View style={styles.uploadIcon}>
+                          <Icon
+                            name="upload_file"
+                            size={28}
+                            color={BLUE}
+                          />
+                        </View>
+
+                        <Text style={styles.uploadTitle}>
+                          Ajouter une ordonnance
+                        </Text>
+
+                        <Text
+                          style={styles.uploadSubtitle}
+                        >
+                          Photo lisible depuis la caméra
+                          ou votre galerie
+                        </Text>
+
+                        <View
+                          style={styles.uploadActions}
+                        >
+                          <Pressable
+                            style={
+                              styles.uploadPrimaryButton
+                            }
+                            onPress={() => {
+                              void takePrescriptionPhoto()
+                            }}
+                            disabled={
+                              imagePicking
+                            }
+                          >
+                            <Icon
+                              name="photo_camera"
+                              size={18}
+                              color="#ffffff"
+                            />
 
                             <Text
                               style={
-                                styles.addressText
+                                styles.uploadPrimaryText
                               }
                             >
-                              {
-                                address.street
-                              }
-                              , {address.city}
+                              Appareil photo
                             </Text>
+                          </Pressable>
 
-                            {!hasCoordinates && (
-                              <View
-                                style={
-                                  styles.locationWarning
-                                }
-                              >
-                                <Icon
-                                  name="location_off"
-                                  size={13}
-                                  color="#b91c1c"
-                                />
+                          <Pressable
+                            style={
+                              styles.uploadSecondaryButton
+                            }
+                            onPress={() => {
+                              void choosePrescriptionPhoto()
+                            }}
+                            disabled={
+                              imagePicking
+                            }
+                          >
+                            <Icon
+                              name="photo_library"
+                              size={18}
+                              color={BLUE}
+                            />
 
-                                <Text
-                                  style={
-                                    styles.locationWarningText
-                                  }
-                                >
-                                  Localisation
-                                  GPS manquante
-                                </Text>
-                              </View>
-                            )}
-                          </View>
-                        </Pressable>
-                      )
-                    },
-                  )}
-                </View>
-              )}
-
-            {(addresses.length === 0 ||
-              useCustom) && (
-              <>
-                <TextInput
-                  value={customAddress}
-                  onChangeText={
-                    setCustomAddress
-                  }
-                  placeholder="Ex : 12 Rue Mohammed V, Casablanca"
-                  placeholderTextColor={
-                    colors.textMuted
-                  }
-                  style={
-                    styles.textInput
-                  }
-                />
-
-                <View
-                  style={
-                    styles.customAddressWarning
-                  }
-                >
-                  <Icon
-                    name="info"
-                    size={17}
-                    color="#1d4ed8"
-                  />
-
-                  <Text
-                    style={
-                      styles.customAddressWarningText
-                    }
-                  >
-                    Pour commander, cette
-                    adresse doit être
-                    enregistrée avec sa
-                    localisation GPS.
-                  </Text>
-                </View>
-              </>
-            )}
-
-            {addresses.length > 0 && (
-              <Pressable
-                onPress={() => {
-                  setError('')
-
-                  setUseCustom(
-                    (currentValue) =>
-                      !currentValue,
-                  )
-                }}
-              >
-                <Text
-                  style={styles.linkText}
-                >
-                  {useCustom
-                    ? '← Utiliser une adresse enregistrée'
-                    : '+ Saisir une autre adresse'}
-                </Text>
-              </Pressable>
-            )}
-
-            <Pressable
-              style={
-                styles.manageAddressButton
-              }
-              onPress={() =>
-                navigation.navigate(
-                  'Addresses',
-                )
-              }
-            >
-              <Icon
-                name="add_location_alt"
-                size={18}
-                color={colors.primary}
-              />
-
-              <Text
-                style={
-                  styles.manageAddressText
-                }
-              >
-                Ajouter ou modifier mes
-                adresses
-              </Text>
-            </Pressable>
-          </>
-        )}
-      </View>
-
-      {/* Prescription */}
-      <View style={styles.card}>
-        <View
-          style={styles.sectionHeader}
-        >
-          <Icon
-            name="description"
-            size={18}
-            color={colors.primary}
-          />
-
-          <Text
-            style={styles.sectionTitle}
-          >
-            Ordonnance
-          </Text>
-        </View>
-
-        {hasPrescriptionItem ? (
-          <View
-            style={styles.warningBox}
-          >
-            <Icon
-              name="warning"
-              size={14}
-              color="#c2410c"
-            />
-
-            <Text
-              style={styles.warningText}
-            >
-              Certains médicaments de
-              votre panier nécessitent
-              obligatoirement une
-              ordonnance.
-            </Text>
-          </View>
-        ) : (
-          <Text
-            style={styles.sectionHelp}
-          >
-            Ajoutez une ordonnance si
-            elle est utile à la
-            préparation de votre
-            commande.
-          </Text>
-        )}
-
-        <View
-          style={styles.segmentRow}
-        >
-          {PRESCRIPTION_OPTIONS.map(
-            (option) => {
-              const active =
-                prescriptionMode ===
-                option.value
-
-              const disabled =
-                hasPrescriptionItem &&
-                option.value === 'none'
-
-              return (
-                <Pressable
-                  key={option.value}
-                  style={({ pressed }) => [
-                    styles.segmentButton,
-
-                    active &&
-                      styles.segmentButtonActive,
-
-                    disabled &&
-                      styles.segmentButtonDisabled,
-
-                    pressed &&
-                      !disabled &&
-                      styles.pressed,
-                  ]}
-                  onPress={() =>
-                    selectPrescriptionMode(
-                      option.value,
+                            <Text
+                              style={
+                                styles.uploadSecondaryText
+                              }
+                            >
+                              Galerie
+                            </Text>
+                          </Pressable>
+                        </View>
+                      </View>
                     )
-                  }
-                  disabled={disabled}
-                  accessibilityRole="button"
-                  accessibilityState={{
-                    selected: active,
-                    disabled,
-                  }}
-                >
-                  <Text
-                    style={[
-                      styles.segmentText,
-
-                      active &&
-                        styles.segmentTextActive,
-
-                      disabled &&
-                        styles.segmentTextDisabled,
-                    ]}
-                  >
-                    {option.label}
-                  </Text>
-                </Pressable>
-              )
-            },
-          )}
-        </View>
-
-        {prescriptionMode ===
-          'photo' && (
-          <View
-            style={styles.photoSection}
-          >
-            {prescriptionPhoto ? (
-              <View
-                style={styles.photoPreviewCard}
-              >
-                <Image
-                  source={{
-                    uri:
-                      prescriptionPhoto.uri,
-                  }}
-                  style={styles.photoPreview}
-                  resizeMode="cover"
-                />
-
-                <View
-                  style={styles.photoInformation}
-                >
-                  <View
-                    style={styles.photoStatusRow}
-                  >
-                    <Icon
-                      name="check_circle"
-                      size={18}
-                      color={colors.success}
-                    />
-
-                    <Text
-                      style={styles.photoStatusText}
-                    >
-                      Ordonnance ajoutée
-                    </Text>
-                  </View>
-
-                  <Text
-                    style={styles.photoFileName}
-                    numberOfLines={1}
-                  >
-                    {prescriptionPhoto.name}
-                  </Text>
-
-                  <View
-                    style={styles.photoActions}
-                  >
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.photoReplaceButton,
-                        pressed && styles.pressed,
-                      ]}
-                      onPress={choosePrescriptionPhoto}
-                      disabled={
-                        imagePicking ||
-                        submitting
+                  ) : (
+                    <View
+                      style={
+                        styles.pickupPrescriptionCard
                       }
                     >
                       <Icon
-                        name="image"
-                        size={16}
-                        color={colors.primary}
+                        name="inventory_2"
+                        size={22}
+                        color="#7b61e8"
                       />
 
-                      <Text
-                        style={styles.photoReplaceText}
+                      <View
+                        style={
+                          styles.pickupPrescriptionText
+                        }
                       >
-                        Remplacer
-                      </Text>
-                    </Pressable>
+                        <Text
+                          style={
+                            styles.pickupPrescriptionTitle
+                          }
+                        >
+                          Remise à la livraison
+                        </Text>
 
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.photoRemoveButton,
-                        pressed && styles.pressed,
-                      ]}
-                      onPress={() => {
-                        setPrescriptionPhoto(null)
-                        setError('')
-                      }}
-                      disabled={submitting}
+                        <Text
+                          style={
+                            styles.pickupPrescriptionSubtitle
+                          }
+                        >
+                          Présentez l’ordonnance originale
+                          au moment de la livraison.
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+                </>
+              ) : (
+                <View style={styles.noPrescriptionCard}>
+                  <Icon
+                    name="verified"
+                    size={22}
+                    color={GREEN}
+                  />
+
+                  <View style={styles.noPrescriptionText}>
+                    <Text
+                      style={
+                        styles.noPrescriptionTitle
+                      }
                     >
-                      <Icon
-                        name="delete_outline"
-                        size={16}
-                        color={colors.errorText}
-                      />
+                      Aucune ordonnance requise
+                    </Text>
 
-                      <Text
-                        style={styles.photoRemoveText}
-                      >
-                        Supprimer
-                      </Text>
-                    </Pressable>
+                    <Text
+                      style={
+                        styles.noPrescriptionSubtitle
+                      }
+                    >
+                      Les médicaments de ce panier ne
+                      nécessitent pas d’ordonnance.
+                    </Text>
                   </View>
                 </View>
-              </View>
-            ) : (
-              <View
-                style={styles.uploadBox}
-              >
-                <View
-                  style={styles.uploadIconCircle}
-                >
+              )}
+            </View>
+
+            <View style={styles.sectionCard}>
+              <View style={styles.sectionHeader}>
+                <View style={styles.sectionIcon}>
                   <Icon
-                    name="description"
-                    size={25}
-                    color={colors.primary}
+                    name="shopping_bag"
+                    size={21}
+                    color={BLUE}
                   />
                 </View>
 
-                <Text
-                  style={styles.uploadTitle}
-                >
-                  Ajouter votre ordonnance
+                <Text style={styles.sectionTitle}>
+                  Articles de la commande
                 </Text>
 
-                <Text
-                  style={styles.uploadText}
+                <Pressable
+                  onPress={() =>
+                    navigation.navigate(
+                      'Cart',
+                    )
+                  }
                 >
-                  Assurez-vous que le nom,
-                  les médicaments et la
-                  signature sont lisibles.
-                </Text>
-
-                <View
-                  style={styles.imageActionRow}
-                >
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.imageActionButton,
-                      styles.imageActionPrimary,
-                      pressed && styles.pressed,
-                    ]}
-                    onPress={takePrescriptionPhoto}
-                    disabled={
-                      imagePicking ||
-                      submitting
-                    }
-                  >
-                    <Icon
-                      name="photo_camera"
-                      size={19}
-                      color={colors.white}
-                    />
-
-                    <Text
-                      style={styles.imageActionPrimaryText}
-                    >
-                      Prendre une photo
-                    </Text>
-                  </Pressable>
-
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.imageActionButton,
-                      styles.imageActionSecondary,
-                      pressed && styles.pressed,
-                    ]}
-                    onPress={choosePrescriptionPhoto}
-                    disabled={
-                      imagePicking ||
-                      submitting
-                    }
-                  >
-                    <Icon
-                      name="photo_library"
-                      size={19}
-                      color={colors.primary}
-                    />
-
-                    <Text
-                      style={styles.imageActionSecondaryText}
-                    >
-                      Galerie
-                    </Text>
-                  </Pressable>
-                </View>
-
-                {imagePicking && (
-                  <View
-                    style={styles.pickerLoading}
-                  >
-                    <ActivityIndicator
-                      size="small"
-                      color={colors.primary}
-                    />
-
-                    <Text
-                      style={styles.pickerLoadingText}
-                    >
-                      Ouverture…
-                    </Text>
-                  </View>
-                )}
-
-                <Text
-                  style={styles.fileRequirements}
-                >
-                  Image JPG, PNG, WEBP ou
-                  HEIC · maximum 10 Mo
-                </Text>
+                  <Text style={styles.linkText}>
+                    Modifier
+                  </Text>
+                </Pressable>
               </View>
-            )}
-          </View>
-        )}
 
-        {prescriptionMode ===
-          'pickup' && (
-          <View
-            style={styles.infoBox}
-          >
-            <Icon
-              name="info"
-              size={17}
-              color="#1d4ed8"
-            />
+              {items.map(
+                ({
+                  medicine,
+                  quantity,
+                }) => {
+                  const unitPrice =
+                    getMedicinePrice(
+                      medicine.min_price,
+                    )
 
-            <Text
-              style={styles.infoText}
-            >
-              Vous devrez remettre
-              l’ordonnance originale au
-              moment de la livraison. La
-              pharmacie peut vérifier la
-              commande avant son envoi.
-            </Text>
-          </View>
-        )}
-      </View>
+                  return (
+                    <View
+                      key={medicine.id}
+                      style={styles.orderItem}
+                    >
+                      <View
+                        style={
+                          styles.orderItemImageWrap
+                        }
+                      >
+                        {medicine.image ? (
+                          <Image
+                            source={{
+                              uri: medicine.image,
+                            }}
+                            style={
+                              styles.orderItemImage
+                            }
+                            resizeMode="contain"
+                          />
+                        ) : (
+                          <Icon
+                            name="medication"
+                            size={27}
+                            color="#7c8aa0"
+                          />
+                        )}
+                      </View>
 
-      {/* Payment */}
-      <View style={styles.card}>
-        <View
-          style={styles.sectionHeader}
-        >
-          <Icon
-            name="payment"
-            size={18}
-            color={colors.primary}
-          />
+                      <View
+                        style={
+                          styles.orderItemInfo
+                        }
+                      >
+                        <Text
+                          style={
+                            styles.orderItemName
+                          }
+                          numberOfLines={1}
+                        >
+                          {medicine.name}
+                        </Text>
 
-          <Text
-            style={styles.sectionTitle}
-          >
-            Mode de paiement
-          </Text>
-        </View>
+                        {!!medicine.generic_name && (
+                          <Text
+                            style={
+                              styles.orderItemGeneric
+                            }
+                            numberOfLines={1}
+                          >
+                            {
+                              medicine.generic_name
+                            }
+                          </Text>
+                        )}
 
-        <View style={styles.payRow}>
-          <PayOption
-            icon="payments"
-            label="Espèces"
-            description="À la livraison"
-            active={
-              paymentMethod === 'cash'
-            }
-            onPress={() => {
-              setError('')
-              setPaymentMethod('cash')
-            }}
-          />
+                        <Text
+                          style={
+                            styles.orderItemPrice
+                          }
+                        >
+                          {unitPrice === null
+                            ? 'Prix indisponible'
+                            : formatPrice(
+                                unitPrice,
+                              )}
+                        </Text>
+                      </View>
 
-          <PayOption
-            icon="credit_card"
-            label="Carte bancaire"
-            description="Bientôt disponible"
-            active={false}
-            disabled
-            badge="Bientôt"
-            onPress={() => undefined}
-          />
-        </View>
-
-        <View
-          style={styles.paymentNotice}
-        >
-          <Icon
-            name="lock"
-            size={15}
-            color={colors.textSecondary}
-          />
-
-          <Text
-            style={styles.paymentNoticeText}
-          >
-            Aucun paiement ne sera demandé
-            dans l’application pour le
-            moment. Vous paierez en espèces
-            à la livraison.
-          </Text>
-        </View>
-      </View>
-
-      {/* Notes */}
-      <View style={styles.card}>
-        <View
-          style={styles.sectionHeader}
-        >
-          <Icon
-            name="notes"
-            size={18}
-            color={colors.primary}
-          />
-
-          <Text
-            style={styles.sectionTitle}
-          >
-            Notes (optionnel)
-          </Text>
-        </View>
-
-        <TextInput
-          value={notes}
-          onChangeText={setNotes}
-          multiline
-          numberOfLines={3}
-          placeholder="Informations supplémentaires pour la pharmacie..."
-          placeholderTextColor={
-            colors.textMuted
-          }
-          style={[
-            styles.textInput,
-            styles.textArea,
-          ]}
-        />
-      </View>
-
-      {hasInvalidPricing && (
-        <View style={styles.errorBox}>
-          <Icon
-            name="warning"
-            size={16}
-            color={colors.errorText}
-          />
-
-          <Text
-            style={styles.errorText}
-          >
-            Un médicament est indisponible
-            ou ne possède pas de prix
-            valide. Retournez au panier
-            pour le retirer.
-          </Text>
-        </View>
-      )}
-
-      {!!error && (
-        <View style={styles.errorBox}>
-          <Icon
-            name="error"
-            size={16}
-            color={colors.errorText}
-          />
-
-          <Text
-            style={styles.errorText}
-          >
-            {error}
-          </Text>
-        </View>
-      )}
-
-      <Pressable
-        style={[
-          styles.submitButton,
-
-          (submitting ||
-            hasInvalidPricing) &&
-            styles.submitButtonDisabled,
-        ]}
-        onPress={handleSubmit}
-        disabled={
-          submitting ||
-          hasInvalidPricing
-        }
-      >
-        {submitting ? (
-          <>
-            <ActivityIndicator
-              color={colors.white}
-            />
-
-            <Text
-              style={styles.submitText}
-            >
-              Création de la commande…
-            </Text>
+                      <View
+                        style={
+                          styles.quantityPill
+                        }
+                      >
+                        <Text
+                          style={
+                            styles.quantityPillText
+                          }
+                        >
+                          x{quantity}
+                        </Text>
+                      </View>
+                    </View>
+                  )
+                },
+              )}
+            </View>
           </>
         ) : (
           <>
+            <View style={styles.sectionCard}>
+              <View style={styles.sectionHeader}>
+                <View style={styles.sectionIcon}>
+                  <Icon
+                    name="credit_card"
+                    size={21}
+                    color={BLUE}
+                  />
+                </View>
+
+                <Text style={styles.sectionTitle}>
+                  Mode de paiement
+                </Text>
+              </View>
+
+              <Pressable
+                style={[
+                  styles.paymentOption,
+                  paymentMethod ===
+                    'cash' &&
+                    styles.paymentOptionSelected,
+                ]}
+                onPress={() => {
+                  setPaymentMethod('cash')
+                  setError('')
+                }}
+              >
+                <View
+                  style={
+                    styles.paymentRadioSelected
+                  }
+                >
+                  <View
+                    style={
+                      styles.paymentRadioSelectedInner
+                    }
+                  />
+                </View>
+
+                <View
+                  style={
+                    styles.paymentCashIcon
+                  }
+                >
+                  <Icon
+                    name="payments"
+                    size={24}
+                    color={GREEN}
+                  />
+                </View>
+
+                <View
+                  style={styles.paymentInfo}
+                >
+                  <Text
+                    style={styles.paymentTitle}
+                  >
+                    Paiement à la livraison
+                  </Text>
+
+                  <Text
+                    style={
+                      styles.paymentSubtitle
+                    }
+                  >
+                    Payez en espèces à la réception
+                  </Text>
+                </View>
+
+                <View
+                  style={
+                    styles.availablePaymentBadge
+                  }
+                >
+                  <Text
+                    style={
+                      styles.availablePaymentBadgeText
+                    }
+                  >
+                    Disponible
+                  </Text>
+                </View>
+              </Pressable>
+
+              <View
+                style={[
+                  styles.paymentOption,
+                  styles.paymentOptionDisabled,
+                ]}
+              >
+                <View
+                  style={
+                    styles.paymentRadioDisabled
+                  }
+                />
+
+                <View
+                  style={
+                    styles.paymentCardIcon
+                  }
+                >
+                  <Icon
+                    name="credit_card"
+                    size={24}
+                    color="#aab4c3"
+                  />
+                </View>
+
+                <View
+                  style={styles.paymentInfo}
+                >
+                  <Text
+                    style={
+                      styles.paymentTitleDisabled
+                    }
+                  >
+                    Carte bancaire
+                  </Text>
+
+                  <Text
+                    style={
+                      styles.paymentSubtitleDisabled
+                    }
+                  >
+                    Bientôt disponible
+                  </Text>
+                </View>
+
+                <View
+                  style={
+                    styles.disabledPaymentBadge
+                  }
+                >
+                  <Text
+                    style={
+                      styles.disabledPaymentBadgeText
+                    }
+                  >
+                    Indisponible
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.sectionCard}>
+              <View style={styles.sectionHeader}>
+                <View style={styles.sectionIcon}>
+                  <Icon
+                    name="notes"
+                    size={21}
+                    color={BLUE}
+                  />
+                </View>
+
+                <Text style={styles.sectionTitle}>
+                  Notes
+                </Text>
+
+                <Text style={styles.optionalLabel}>
+                  Optionnel
+                </Text>
+              </View>
+
+              <TextInput
+                style={styles.notesInput}
+                value={notes}
+                onChangeText={(value) => {
+                  setNotes(value)
+                  setError('')
+                }}
+                placeholder="Instructions pour la livraison, repères, étage, code porte…"
+                placeholderTextColor="#98a5b7"
+                multiline
+                maxLength={200}
+                textAlignVertical="top"
+              />
+
+              <Text style={styles.counterText}>
+                {notes.length}/200
+              </Text>
+            </View>
+
+            <View style={styles.sectionCard}>
+              <View style={styles.sectionHeader}>
+                <View style={styles.sectionIcon}>
+                  <Icon
+                    name="receipt_long"
+                    size={21}
+                    color={BLUE}
+                  />
+                </View>
+
+                <Text style={styles.sectionTitle}>
+                  Résumé de la commande
+                </Text>
+              </View>
+
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>
+                  Sous-total ({itemCount} article
+                  {itemCount > 1 ? 's' : ''})
+                </Text>
+
+                <Text style={styles.summaryValue}>
+                  {formatPrice(
+                    estimatedSubtotal,
+                  )}
+                </Text>
+              </View>
+
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>
+                  Frais de livraison
+                </Text>
+
+                <Text style={styles.summaryValue}>
+                  {formatPrice(
+                    DELIVERY_FEE,
+                  )}
+                </Text>
+              </View>
+
+              <View style={styles.summaryDivider} />
+
+              <View style={styles.totalRow}>
+                <View>
+                  <Text style={styles.totalLabel}>
+                    Total à payer
+                  </Text>
+
+                  <Text
+                    style={styles.totalSubtitle}
+                  >
+                    Toutes taxes comprises
+                  </Text>
+                </View>
+
+                <Text style={styles.totalValue}>
+                  {formatPrice(
+                    estimatedTotal,
+                  )}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.securityCard}>
+              <View style={styles.securityIcon}>
+                <Icon
+                  name="verified_user"
+                  size={24}
+                  color="#ffffff"
+                />
+              </View>
+
+              <View style={styles.securityText}>
+                <Text
+                  style={styles.securityTitle}
+                >
+                  Commande sécurisée
+                </Text>
+
+                <Text
+                  style={
+                    styles.securitySubtitle
+                  }
+                >
+                  Vos informations de livraison et
+                  votre ordonnance sont protégées.
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.commitmentCard}>
+              <Text style={styles.commitmentTitle}>
+                En passant commande
+              </Text>
+
+              <View style={styles.commitmentRow}>
+                <Icon
+                  name="check"
+                  size={18}
+                  color={GREEN}
+                />
+
+                <Text
+                  style={
+                    styles.commitmentText
+                  }
+                >
+                  La disponibilité des médicaments sera
+                  confirmée par la pharmacie.
+                </Text>
+              </View>
+
+              <View style={styles.commitmentRow}>
+                <Icon
+                  name="check"
+                  size={18}
+                  color={GREEN}
+                />
+
+                <Text
+                  style={
+                    styles.commitmentText
+                  }
+                >
+                  Vous serez notifié à chaque étape de
+                  votre commande.
+                </Text>
+              </View>
+
+              <View style={styles.commitmentRow}>
+                <Icon
+                  name="check"
+                  size={18}
+                  color={GREEN}
+                />
+
+                <Text
+                  style={
+                    styles.commitmentText
+                  }
+                >
+                  Le paiement se fera en espèces à la
+                  livraison.
+                </Text>
+              </View>
+            </View>
+          </>
+        )}
+
+        {error ? (
+          <View style={styles.errorBox}>
+            <Icon
+              name="error_outline"
+              size={20}
+              color="#b4232f"
+            />
+
+            <Text style={styles.errorText}>
+              {error}
+            </Text>
+          </View>
+        ) : null}
+      </ScrollView>
+
+      <View
+        style={[
+          styles.bottomPanel,
+          {
+            paddingBottom:
+              Math.max(
+                insets.bottom,
+                10,
+              ),
+          },
+        ]}
+      >
+        {step === 1 ? (
+          <Pressable
+            style={styles.primaryButton}
+            onPress={goToPaymentStep}
+            disabled={
+              submitting ||
+              imagePicking ||
+              addressesLoading
+            }
+          >
             <Text
-              style={styles.submitText}
+              style={styles.primaryButtonText}
             >
-              Confirmer la commande
+              Continuer vers le paiement
             </Text>
 
             <Icon
               name="arrow_forward"
-              size={19}
-              color={colors.white}
+              size={20}
+              color="#ffffff"
             />
-          </>
-        )}
-      </Pressable>
-    </ScrollView>
-  )
-}
-
-type PayOptionProps = {
-  icon: string
-  label: string
-  description: string
-  active: boolean
-  disabled?: boolean
-  badge?: string
-  onPress: () => void
-}
-
-function PayOption({
-  icon,
-  label,
-  description,
-  active,
-  disabled = false,
-  badge,
-  onPress,
-}: PayOptionProps) {
-  return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.payOption,
-
-        active &&
-          styles.payOptionActive,
-
-        disabled &&
-          styles.payOptionDisabled,
-
-        pressed &&
-          !disabled &&
-          styles.pressed,
-      ]}
-      onPress={onPress}
-      disabled={disabled}
-      accessibilityRole="button"
-      accessibilityState={{
-        selected: active,
-        disabled,
-      }}
-    >
-      {!!badge && (
-        <View style={styles.payBadge}>
-          <Text
-            style={styles.payBadgeText}
+          </Pressable>
+        ) : (
+          <Pressable
+            style={[
+              styles.primaryButton,
+              submitting &&
+                styles.primaryButtonDisabled,
+            ]}
+            onPress={() => {
+              void handleSubmit()
+            }}
+            disabled={submitting}
           >
-            {badge}
-          </Text>
-        </View>
-      )}
+            {submitting ? (
+              <ActivityIndicator
+                size="small"
+                color="#ffffff"
+              />
+            ) : (
+              <Icon
+                name="lock_outline"
+                size={20}
+                color="#ffffff"
+              />
+            )}
 
-      <Icon
-        name={icon}
-        size={22}
-        color={
-          disabled
-            ? colors.textMuted
-            : active
-              ? colors.primary
-              : colors.textSecondary
-        }
-      />
+            <Text
+              style={styles.primaryButtonText}
+            >
+              {submitting
+                ? 'Création de la commande…'
+                : 'Confirmer la commande'}
+            </Text>
 
-      <Text
-        style={[
-          styles.payLabel,
-
-          active &&
-            styles.payLabelActive,
-
-          disabled &&
-            styles.payLabelDisabled,
-        ]}
-      >
-        {label}
-      </Text>
-
-      <Text
-        style={[
-          styles.payDescription,
-
-          disabled &&
-            styles.payDescriptionDisabled,
-        ]}
-      >
-        {description}
-      </Text>
-    </Pressable>
+            {!submitting ? (
+              <Icon
+                name="arrow_forward"
+                size={20}
+                color="#ffffff"
+              />
+            ) : null}
+          </Pressable>
+        )}
+      </View>
+    </View>
   )
 }
 
-const styles =
-  StyleSheet.create({
-    screen: {
-      flex: 1,
-      backgroundColor:
-        colors.surface,
-    },
-
-    content: {
-      gap: 16,
-      padding: 16,
-      paddingBottom: 32,
-    },
-
-    title: {
-      color: colors.textPrimary,
-      fontSize: 20,
-      fontWeight: '700',
-    },
-
-    card: {
-      gap: 12,
-      padding: 16,
-      borderWidth: 1,
-      borderColor:
-        colors.outlineVariant,
-      borderRadius: 16,
-      backgroundColor:
-        colors.surfaceLowest,
-    },
-
-    sectionHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-    },
-
-    sectionTitle: {
-      color:
-        colors.textSecondary,
-      fontSize: 14,
-      fontWeight: '600',
-    },
-
-    summaryList: {
-      gap: 13,
-    },
-
-    summaryRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent:
-        'space-between',
-      gap: 12,
-    },
-
-    summaryLeft: {
-      flex: 1,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-    },
-
-    summaryIcon: {
-      width: 38,
-      height: 38,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderRadius: 10,
-      backgroundColor:
-        colors.surface,
-    },
-
-    summaryInformation: {
-      flex: 1,
-      minWidth: 0,
-    },
-
-    summaryName: {
-      color:
-        colors.textPrimary,
-      fontSize: 14,
-      fontWeight: '700',
-    },
-
-    summaryGeneric: {
-      marginTop: 2,
-      color: colors.textMuted,
-      fontSize: 11,
-    },
-
-    summaryUnitPrice: {
-      marginTop: 4,
-      color:
-        colors.textSecondary,
-      fontSize: 11,
-      fontWeight: '600',
-    },
-
-    summaryRight: {
-      alignItems: 'flex-end',
-      gap: 4,
-    },
-
-    summaryQty: {
-      color:
-        colors.textSecondary,
-      fontSize: 12,
-      fontWeight: '700',
-    },
-
-    summaryLineTotal: {
-      color: colors.primary,
-      fontSize: 13,
-      fontWeight: '800',
-    },
-
-    priceUnavailable: {
-      color: colors.textMuted,
-    },
-
-    pricingDivider: {
-      height: 1,
-      marginVertical: 3,
-      backgroundColor:
-        colors.outlineVariant,
-    },
-
-    pricingRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent:
-        'space-between',
-    },
-
-    pricingLabel: {
-      color:
-        colors.textSecondary,
-      fontSize: 13,
-    },
-
-    pricingValue: {
-      color:
-        colors.textPrimary,
-      fontSize: 13,
-      fontWeight: '700',
-    },
-
-    pricingTotalRow: {
-      flexDirection: 'row',
-      alignItems: 'flex-end',
-      justifyContent:
-        'space-between',
-      gap: 12,
-      marginTop: 4,
-    },
-
-    totalInfo: {
-      flex: 1,
-    },
-
-    pricingTotalLabel: {
-      color:
-        colors.textPrimary,
-      fontSize: 15,
-      fontWeight: '800',
-    },
-
-    pricingNotice: {
-      marginTop: 3,
-      color: colors.textMuted,
-      fontSize: 10,
-      lineHeight: 14,
-    },
-
-    pricingTotalValue: {
-      color: colors.primary,
-      fontSize: 19,
-      fontWeight: '900',
-    },
-
-    summaryFootnote: {
-      marginTop: 4,
-      paddingTop: 12,
-      borderTopWidth: 1,
-      borderTopColor:
-        colors.outlineVariant,
-      color: colors.textMuted,
-      fontSize: 11,
-      lineHeight: 16,
-    },
-
-    addressLoading: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
-      paddingVertical: 10,
-    },
-
-    addressLoadingText: {
-      color:
-        colors.textSecondary,
-      fontSize: 13,
-    },
-
-    addressList: {
-      gap: 8,
-    },
-
-    addressOption: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 12,
-      padding: 12,
-      borderWidth: 1,
-      borderColor:
-        colors.outlineVariant,
-      borderRadius: 12,
-    },
-
-    addressOptionActive: {
-      borderColor:
-        colors.primary,
-      backgroundColor: '#eff6ff',
-    },
-
-    radio: {
-      width: 20,
-      height: 20,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 2,
-      borderColor:
-        colors.outlineVariant,
-      borderRadius: 10,
-    },
-
-    radioActive: {
-      borderColor:
-        colors.primary,
-    },
-
-    radioDot: {
-      width: 10,
-      height: 10,
-      borderRadius: 5,
-      backgroundColor:
-        colors.primary,
-    },
-
-    addressInformation: {
-      flex: 1,
-    },
-
-    addressLabelRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 7,
-    },
-
-    addressLabel: {
-      color:
-        colors.textPrimary,
-      fontSize: 13,
-      fontWeight: '700',
-    },
-
-    defaultBadge: {
-      paddingHorizontal: 7,
-      paddingVertical: 2,
-      borderRadius: 999,
-      backgroundColor: '#dbeafe',
-    },
-
-    defaultBadgeText: {
-      color: '#1d4ed8',
-      fontSize: 9,
-      fontWeight: '700',
-    },
-
-    addressText: {
-      marginTop: 2,
-      color:
-        colors.textSecondary,
-      fontSize: 12,
-      lineHeight: 17,
-    },
-
-    locationWarning: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 4,
-      marginTop: 6,
-    },
-
-    locationWarningText: {
-      color: '#b91c1c',
-      fontSize: 10,
-      fontWeight: '600',
-    },
-
-    textInput: {
-      paddingHorizontal: 14,
-      paddingVertical: 12,
-      borderWidth: 1,
-      borderColor:
-        colors.outlineVariant,
-      borderRadius: 12,
-      backgroundColor:
-        colors.surfaceLowest,
-      color: colors.textPrimary,
-      fontSize: 14,
-    },
-
-    textArea: {
-      minHeight: 72,
-      textAlignVertical: 'top',
-    },
-
-    customAddressWarning: {
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      gap: 8,
-      padding: 11,
-      borderWidth: 1,
-      borderColor: '#bfdbfe',
-      borderRadius: 12,
-      backgroundColor: '#eff6ff',
-    },
-
-    customAddressWarningText: {
-      flex: 1,
-      color: '#1d4ed8',
-      fontSize: 11,
-      lineHeight: 16,
-    },
-
-    linkText: {
-      color: colors.primary,
-      fontSize: 12,
-      fontWeight: '600',
-    },
-
-    manageAddressButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 7,
-      paddingVertical: 11,
-      borderWidth: 1,
-      borderColor:
-        colors.primary,
-      borderRadius: 12,
-    },
-
-    manageAddressText: {
-      color: colors.primary,
-      fontSize: 12,
-      fontWeight: '700',
-    },
-
-    warningBox: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      paddingHorizontal: 12,
-      paddingVertical: 8,
-      borderRadius: 12,
-      backgroundColor: '#fff7ed',
-    },
-
-    warningText: {
-      flex: 1,
-      color: '#c2410c',
-      fontSize: 12,
-    },
-
-    sectionHelp: {
-      color: colors.textSecondary,
-      fontSize: 12,
-      lineHeight: 18,
-    },
-
-    infoBox: {
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      gap: 8,
-      padding: 12,
-      borderWidth: 1,
-      borderColor: '#bfdbfe',
-      borderRadius: 12,
-      backgroundColor: '#eff6ff',
-    },
-
-    infoText: {
-      flex: 1,
-      color: '#1d4ed8',
-      fontSize: 11,
-      lineHeight: 17,
-    },
-
-    segmentRow: {
-      flexDirection: 'row',
-      gap: 8,
-    },
-
-    segmentButton: {
-      flex: 1,
-      alignItems: 'center',
-      paddingVertical: 10,
-      borderWidth: 2,
-      borderColor:
-        colors.outlineVariant,
-      borderRadius: 12,
-    },
-
-    segmentButtonActive: {
-      borderColor:
-        colors.primary,
-      backgroundColor:
-        colors.primary,
-    },
-
-    segmentButtonDisabled: {
-      borderColor: '#e5e7eb',
-      backgroundColor: '#f3f4f6',
-      opacity: 0.65,
-    },
-
-    segmentText: {
-      color:
-        colors.textSecondary,
-      fontSize: 12,
-      fontWeight: '600',
-    },
-
-    segmentTextActive: {
-      color: colors.white,
-    },
-
-    segmentTextDisabled: {
-      color: colors.textMuted,
-    },
-
-    photoSection: {
-      gap: 10,
-    },
-
-    uploadBox: {
-      alignItems: 'center',
-      gap: 10,
-      padding: 16,
-      borderWidth: 2,
-      borderColor: '#bfdbfe',
-      borderStyle: 'dashed',
-      borderRadius: 14,
-      backgroundColor: '#f8fbff',
-    },
-
-    uploadIconCircle: {
-      width: 50,
-      height: 50,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderRadius: 25,
-      backgroundColor: '#dbeafe',
-    },
-
-    uploadTitle: {
-      color: colors.textPrimary,
-      fontSize: 14,
-      fontWeight: '800',
-      textAlign: 'center',
-    },
-
-    uploadText: {
-      maxWidth: 290,
-      color: colors.textSecondary,
-      fontSize: 12,
-      lineHeight: 17,
-      textAlign: 'center',
-    },
-
-    imageActionRow: {
-      width: '100%',
-      flexDirection: 'row',
-      gap: 10,
-      marginTop: 2,
-    },
-
-    imageActionButton: {
-      minHeight: 44,
-      flex: 1,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 7,
-      paddingHorizontal: 10,
-      borderRadius: 12,
-    },
-
-    imageActionPrimary: {
-      backgroundColor: colors.primary,
-    },
-
-    imageActionSecondary: {
-      borderWidth: 1,
-      borderColor: colors.primary,
-      backgroundColor: colors.surfaceLowest,
-    },
-
-    imageActionPrimaryText: {
-      color: colors.white,
-      fontSize: 11,
-      fontWeight: '700',
-    },
-
-    imageActionSecondaryText: {
-      color: colors.primary,
-      fontSize: 11,
-      fontWeight: '700',
-    },
-
-    pickerLoading: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 7,
-    },
-
-    pickerLoadingText: {
-      color: colors.textSecondary,
-      fontSize: 11,
-    },
-
-    fileRequirements: {
-      color: colors.textMuted,
-      fontSize: 10,
-      textAlign: 'center',
-    },
-
-    photoPreviewCard: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 12,
-      padding: 11,
-      borderWidth: 1,
-      borderColor: '#bbf7d0',
-      borderRadius: 14,
-      backgroundColor: colors.successBg,
-    },
-
-    photoPreview: {
-      width: 76,
-      height: 92,
-      borderRadius: 10,
-      backgroundColor: colors.outlineVariant,
-    },
-
-    photoInformation: {
-      flex: 1,
-      minWidth: 0,
-      gap: 6,
-    },
-
-    photoStatusRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-    },
-
-    photoStatusText: {
-      color: '#15803d',
-      fontSize: 12,
-      fontWeight: '800',
-    },
-
-    photoFileName: {
-      color: colors.textSecondary,
-      fontSize: 10,
-    },
-
-    photoActions: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
-    },
-
-    photoReplaceButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 5,
-      paddingHorizontal: 9,
-      paddingVertical: 7,
-      borderWidth: 1,
-      borderColor: colors.primary,
-      borderRadius: 9,
-      backgroundColor: colors.surfaceLowest,
-    },
-
-    photoReplaceText: {
-      color: colors.primary,
-      fontSize: 10,
-      fontWeight: '700',
-    },
-
-    photoRemoveButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 5,
-      paddingHorizontal: 9,
-      paddingVertical: 7,
-      borderWidth: 1,
-      borderColor: '#fecaca',
-      borderRadius: 9,
-      backgroundColor: colors.surfaceLowest,
-    },
-
-    photoRemoveText: {
-      color: colors.errorText,
-      fontSize: 10,
-      fontWeight: '700',
-    },
-
-    payRow: {
-      flexDirection: 'row',
-      gap: 12,
-    },
-
-    payOption: {
-      flex: 1,
-      alignItems: 'center',
-      gap: 8,
-      paddingVertical: 16,
-      borderWidth: 2,
-      borderColor:
-        colors.outlineVariant,
-      borderRadius: 12,
-    },
-
-    payOptionActive: {
-      borderColor:
-        colors.primary,
-      backgroundColor: '#eff6ff',
-    },
-
-    payOptionDisabled: {
-      borderColor: '#e5e7eb',
-      backgroundColor: '#f9fafb',
-      opacity: 0.8,
-    },
-
-    payBadge: {
-      position: 'absolute',
-      top: 7,
-      right: 7,
-      paddingHorizontal: 6,
-      paddingVertical: 2,
-      borderRadius: 999,
-      backgroundColor: '#fef3c7',
-    },
-
-    payBadgeText: {
-      color: '#92400e',
-      fontSize: 8,
-      fontWeight: '800',
-    },
-
-    payLabel: {
-      color:
-        colors.textSecondary,
-      fontSize: 12,
-      fontWeight: '600',
-    },
-
-    payLabelActive: {
-      color: colors.primary,
-    },
-
-    payLabelDisabled: {
-      color: colors.textMuted,
-    },
-
-    payDescription: {
-      color: colors.textMuted,
-      fontSize: 10,
-      textAlign: 'center',
-    },
-
-    payDescriptionDisabled: {
-      color: colors.textMuted,
-    },
-
-    paymentNotice: {
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      gap: 7,
-      paddingTop: 3,
-    },
-
-    paymentNoticeText: {
-      flex: 1,
-      color: colors.textSecondary,
-      fontSize: 10,
-      lineHeight: 15,
-    },
-
-    pressed: {
-      opacity: 0.78,
-    },
-
-    errorBox: {
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      gap: 8,
-      paddingHorizontal: 14,
-      paddingVertical: 12,
-      borderWidth: 1,
-      borderColor: '#fecaca',
-      borderRadius: 12,
-      backgroundColor:
-        colors.errorBg,
-    },
-
-    errorText: {
-      flex: 1,
-      color:
-        colors.errorText,
-      fontSize: 13,
-      lineHeight: 18,
-    },
-
-    submitButton: {
-      minHeight: 54,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 8,
-      paddingVertical: 16,
-      borderRadius: 16,
-      backgroundColor:
-        colors.primary,
-    },
-
-    submitButtonDisabled: {
-      opacity: 0.55,
-    },
-
-    submitText: {
-      color: colors.white,
-      fontSize: 14,
-      fontWeight: '700',
-    },
-  })
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: SURFACE,
+  },
+
+  content: {
+    backgroundColor: SURFACE,
+  },
+
+  hero: {
+    minHeight: 164,
+    paddingHorizontal: 18,
+    paddingBottom: 28,
+    borderBottomLeftRadius: 34,
+    borderBottomRightRadius: 34,
+  },
+
+  heroHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  backButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.45)',
+    borderRadius: 14,
+    backgroundColor:
+      'rgba(255,255,255,0.08)',
+  },
+
+  heroTitleArea: {
+    flex: 1,
+    marginLeft: 13,
+  },
+
+  heroTitle: {
+    color: '#ffffff',
+    fontSize: 23,
+    lineHeight: 28,
+    fontWeight: '900',
+    letterSpacing: -0.35,
+  },
+
+  heroSubtitle: {
+    marginTop: 4,
+    color: '#eef8ff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+
+  secureIcon: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.36)',
+    borderRadius: 14,
+    backgroundColor:
+      'rgba(255,255,255,0.08)',
+  },
+
+  progressCard: {
+    flexDirection: 'row',
+    marginHorizontal: 14,
+    marginTop: -18,
+    marginBottom: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 24,
+    backgroundColor: '#ffffff',
+    shadowColor: '#0b1f4d',
+    shadowOffset: {
+      width: 0,
+      height: 7,
+    },
+    shadowOpacity: 0.08,
+    shadowRadius: 15,
+    elevation: 5,
+  },
+
+  progressItem: {
+    flex: 1,
+    alignItems: 'center',
+    position: 'relative',
+  },
+
+  progressCircle: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#aeb9ca',
+    borderRadius: 16,
+    backgroundColor: '#ffffff',
+    zIndex: 2,
+  },
+
+  progressCircleActive: {
+    borderColor: BLUE,
+    backgroundColor: BLUE,
+  },
+
+  progressNumber: {
+    color: '#7c899c',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+
+  progressNumberActive: {
+    color: '#ffffff',
+  },
+
+  progressLabel: {
+    marginTop: 6,
+    color: '#78869a',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+
+  progressLabelActive: {
+    color: TEXT,
+  },
+
+  progressLine: {
+    position: 'absolute',
+    top: 15,
+    left: '67%',
+    width: '66%',
+    height: 2,
+    backgroundColor: '#d4dbe5',
+    zIndex: 1,
+  },
+
+  progressLineActive: {
+    backgroundColor: BLUE,
+  },
+
+  sectionCard: {
+    marginHorizontal: 14,
+    marginBottom: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 24,
+    backgroundColor: '#ffffff',
+    shadowColor: '#0b1f4d',
+    shadowOffset: {
+      width: 0,
+      height: 7,
+    },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 3,
+  },
+
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+
+  sectionIcon: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    borderRadius: 12,
+    backgroundColor: '#edf4ff',
+  },
+
+  sectionTitle: {
+    flex: 1,
+    color: TEXT,
+    fontSize: 17,
+    fontWeight: '900',
+  },
+
+  linkText: {
+    color: BLUE,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+
+  loadingRow: {
+    minHeight: 112,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  loadingText: {
+    marginTop: 8,
+    color: MUTED,
+    fontSize: 12,
+  },
+
+  emptyAddressCard: {
+    minHeight: 110,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#c8d7ee',
+    borderRadius: 18,
+    backgroundColor: '#f8fbff',
+  },
+
+  selectedAddressCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    borderRadius: 18,
+    backgroundColor: '#f4f8ff',
+  },
+
+  addressIcon: {
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+    borderRadius: 16,
+    backgroundColor: '#e6efff',
+  },
+
+  addressInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  addressTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+
+  addressTitle: {
+    flexShrink: 1,
+    color: TEXT,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+
+  defaultBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 9,
+    backgroundColor: '#e7f9ef',
+  },
+
+  defaultBadgeText: {
+    color: '#16824f',
+    fontSize: 9,
+    fontWeight: '800',
+  },
+
+  addressSubtitle: {
+    marginTop: 4,
+    color: '#50617a',
+    fontSize: 12,
+    lineHeight: 17,
+  },
+
+  gpsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 7,
+  },
+
+  gpsText: {
+    color: '#16824f',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+
+  gpsTextWarning: {
+    color: '#b35b17',
+  },
+
+  addressChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 11,
+  },
+
+  addressChip: {
+    maxWidth: 130,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: '#d6deeb',
+    borderRadius: 13,
+    backgroundColor: '#ffffff',
+  },
+
+  addressChipSelected: {
+    borderColor: BLUE,
+    backgroundColor: '#eef4ff',
+  },
+
+  addressChipText: {
+    color: '#607087',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+
+  addressChipTextSelected: {
+    color: BLUE,
+  },
+
+  addAddressButton: {
+    minHeight: 46,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    marginTop: 12,
+    borderRadius: 14,
+    backgroundColor: '#f2f7ff',
+  },
+
+  addAddressText: {
+    color: BLUE,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+
+  deliveryCard: {
+    minHeight: 86,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 13,
+    borderWidth: 1.5,
+    borderColor: BLUE,
+    borderRadius: 17,
+    backgroundColor: '#fbfdff',
+  },
+
+  radioSelected: {
+    width: 23,
+    height: 23,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 11,
+    borderRadius: 12,
+    backgroundColor: BLUE,
+  },
+
+  radioSelectedInner: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#ffffff',
+  },
+
+  deliveryIcon: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 11,
+    borderRadius: 14,
+    backgroundColor: '#e8f1ff',
+  },
+
+  deliveryInfo: {
+    flex: 1,
+  },
+
+  deliveryTitle: {
+    color: TEXT,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+
+  deliverySubtitle: {
+    marginTop: 4,
+    color: MUTED,
+    fontSize: 11,
+    lineHeight: 15,
+  },
+
+  deliveryPrice: {
+    color: BLUE,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+
+  requiredBadge: {
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 10,
+    backgroundColor: '#fff3e8',
+  },
+
+  requiredBadgeText: {
+    color: '#c65b17',
+    fontSize: 10,
+    fontWeight: '900',
+  },
+
+  infoNotice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    padding: 12,
+    borderRadius: 15,
+    backgroundColor: '#f2f6ff',
+  },
+
+  infoNoticeText: {
+    flex: 1,
+    color: '#53627a',
+    fontSize: 11,
+    lineHeight: 16,
+  },
+
+  modeSelector: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+  },
+
+  modeOption: {
+    flex: 1,
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#dde5f0',
+    borderRadius: 14,
+    backgroundColor: '#f8fafc',
+  },
+
+  modeOptionActive: {
+    borderColor: '#b9ccff',
+    backgroundColor: '#ffffff',
+  },
+
+  modeOptionText: {
+    color: '#768499',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+
+  modeOptionTextActive: {
+    color: BLUE,
+  },
+
+  uploadArea: {
+    alignItems: 'center',
+    marginTop: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#cbd8ec',
+    borderStyle: 'dashed',
+    borderRadius: 17,
+    backgroundColor: '#fbfdff',
+  },
+
+  uploadIcon: {
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 15,
+    backgroundColor: '#eaf2ff',
+  },
+
+  uploadTitle: {
+    marginTop: 8,
+    color: TEXT,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+
+  uploadSubtitle: {
+    marginTop: 4,
+    color: MUTED,
+    fontSize: 11,
+    textAlign: 'center',
+  },
+
+  uploadActions: {
+    width: '100%',
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+  },
+
+  uploadPrimaryButton: {
+    flex: 1,
+    minHeight: 43,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderRadius: 13,
+    backgroundColor: BLUE,
+  },
+
+  uploadPrimaryText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '900',
+  },
+
+  uploadSecondaryButton: {
+    flex: 1,
+    minHeight: 43,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#bfd1ff',
+    borderRadius: 13,
+    backgroundColor: '#ffffff',
+  },
+
+  uploadSecondaryText: {
+    color: BLUE,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+
+  uploadedPrescriptionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 12,
+    padding: 13,
+    borderRadius: 16,
+    backgroundColor: '#ecfaf3',
+  },
+
+  uploadedIcon: {
+    width: 38,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    borderRadius: 12,
+    backgroundColor: GREEN,
+  },
+
+  uploadedInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  uploadedTitle: {
+    color: '#126b47',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+
+  uploadedFilename: {
+    marginTop: 3,
+    color: '#547367',
+    fontSize: 10,
+  },
+
+  replaceButton: {
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#b4dbc7',
+    borderRadius: 11,
+    backgroundColor: '#ffffff',
+  },
+
+  replaceButtonText: {
+    color: '#18734e',
+    fontSize: 10,
+    fontWeight: '900',
+  },
+
+  pickupPrescriptionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 12,
+    padding: 13,
+    borderRadius: 16,
+    backgroundColor: '#f4f0ff',
+  },
+
+  pickupPrescriptionText: {
+    flex: 1,
+  },
+
+  pickupPrescriptionTitle: {
+    color: '#5942b8',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+
+  pickupPrescriptionSubtitle: {
+    marginTop: 3,
+    color: '#71669b',
+    fontSize: 10,
+    lineHeight: 14,
+  },
+
+  noPrescriptionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 13,
+    borderRadius: 16,
+    backgroundColor: '#ecfaf3',
+  },
+
+  noPrescriptionText: {
+    flex: 1,
+  },
+
+  noPrescriptionTitle: {
+    color: '#126b47',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+
+  noPrescriptionSubtitle: {
+    marginTop: 3,
+    color: '#547367',
+    fontSize: 10,
+    lineHeight: 14,
+  },
+
+  orderItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#edf1f6',
+  },
+
+  orderItemImageWrap: {
+    width: 62,
+    height: 62,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    marginRight: 11,
+    borderRadius: 13,
+    backgroundColor: '#f5f7fa',
+  },
+
+  orderItemImage: {
+    width: '100%',
+    height: '100%',
+  },
+
+  orderItemInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  orderItemName: {
+    color: TEXT,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+
+  orderItemGeneric: {
+    marginTop: 2,
+    color: MUTED,
+    fontSize: 10,
+  },
+
+  orderItemPrice: {
+    marginTop: 5,
+    color: BLUE,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+
+  quantityPill: {
+    minWidth: 42,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 9,
+    borderRadius: 13,
+    backgroundColor: '#eef3fb',
+  },
+
+  quantityPillText: {
+    color: TEXT,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+
+  paymentOption: {
+    minHeight: 84,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 13,
+    borderWidth: 1,
+    borderColor: '#dce4ee',
+    borderRadius: 17,
+    backgroundColor: '#ffffff',
+  },
+
+  paymentOptionSelected: {
+    borderWidth: 1.5,
+    borderColor: BLUE,
+    backgroundColor: '#fbfdff',
+  },
+
+  paymentOptionDisabled: {
+    marginTop: 10,
+    backgroundColor: '#f7f8fa',
+    opacity: 0.8,
+  },
+
+  paymentRadioSelected: {
+    width: 23,
+    height: 23,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    borderRadius: 12,
+    backgroundColor: BLUE,
+  },
+
+  paymentRadioSelectedInner: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#ffffff',
+  },
+
+  paymentRadioDisabled: {
+    width: 23,
+    height: 23,
+    marginRight: 10,
+    borderWidth: 1.5,
+    borderColor: '#bfc8d5',
+    borderRadius: 12,
+  },
+
+  paymentCashIcon: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    borderRadius: 14,
+    backgroundColor: '#ebfaf3',
+  },
+
+  paymentCardIcon: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    borderRadius: 14,
+    backgroundColor: '#edf0f4',
+  },
+
+  paymentInfo: {
+    flex: 1,
+  },
+
+  paymentTitle: {
+    color: TEXT,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+
+  paymentSubtitle: {
+    marginTop: 3,
+    color: MUTED,
+    fontSize: 10,
+  },
+
+  paymentTitleDisabled: {
+    color: '#788497',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+
+  paymentSubtitleDisabled: {
+    marginTop: 3,
+    color: '#99a4b3',
+    fontSize: 10,
+  },
+
+  availablePaymentBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 9,
+    backgroundColor: '#e8faf0',
+  },
+
+  availablePaymentBadgeText: {
+    color: '#16834f',
+    fontSize: 9,
+    fontWeight: '900',
+  },
+
+  disabledPaymentBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 9,
+    backgroundColor: '#e8ebf0',
+  },
+
+  disabledPaymentBadgeText: {
+    color: '#7f8a99',
+    fontSize: 9,
+    fontWeight: '900',
+  },
+
+  optionalLabel: {
+    color: '#8a97a9',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+
+  notesInput: {
+    minHeight: 105,
+    padding: 13,
+    borderWidth: 1,
+    borderColor: '#d9e2ee',
+    borderRadius: 15,
+    backgroundColor: '#fbfcfe',
+    color: TEXT,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+
+  counterText: {
+    marginTop: 5,
+    color: '#8b97a9',
+    fontSize: 10,
+    textAlign: 'right',
+  },
+
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+  },
+
+  summaryLabel: {
+    color: '#52617a',
+    fontSize: 12,
+  },
+
+  summaryValue: {
+    color: TEXT,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+
+  summaryDivider: {
+    height: 1,
+    marginVertical: 8,
+    backgroundColor: '#e5ebf3',
+  },
+
+  totalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+
+  totalLabel: {
+    color: TEXT,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+
+  totalSubtitle: {
+    marginTop: 3,
+    color: MUTED,
+    fontSize: 10,
+  },
+
+  totalValue: {
+    color: BLUE,
+    fontSize: 24,
+    fontWeight: '900',
+  },
+
+  securityCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 14,
+    marginBottom: 12,
+    padding: 14,
+    borderRadius: 19,
+    backgroundColor: '#eafaf2',
+  },
+
+  securityIcon: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 11,
+    borderRadius: 14,
+    backgroundColor: GREEN,
+  },
+
+  securityText: {
+    flex: 1,
+  },
+
+  securityTitle: {
+    color: '#126b47',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+
+  securitySubtitle: {
+    marginTop: 3,
+    color: '#557367',
+    fontSize: 10,
+    lineHeight: 14,
+  },
+
+  commitmentCard: {
+    marginHorizontal: 14,
+    marginBottom: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 20,
+    backgroundColor: '#ffffff',
+  },
+
+  commitmentTitle: {
+    marginBottom: 10,
+    color: TEXT,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+
+  commitmentRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 7,
+    marginTop: 7,
+  },
+
+  commitmentText: {
+    flex: 1,
+    color: '#56657c',
+    fontSize: 10,
+    lineHeight: 15,
+  },
+
+  errorBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginHorizontal: 14,
+    marginBottom: 14,
+    padding: 13,
+    borderWidth: 1,
+    borderColor: '#f0c0c6',
+    borderRadius: 16,
+    backgroundColor: '#fff5f6',
+  },
+
+  errorText: {
+    flex: 1,
+    color: '#972b38',
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '600',
+  },
+
+  bottomPanel: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#dce5f1',
+    backgroundColor: '#ffffff',
+    shadowColor: '#00184d',
+    shadowOffset: {
+      width: 0,
+      height: -5,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 15,
+    elevation: 15,
+  },
+
+  primaryButton: {
+    minHeight: 56,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 9,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    backgroundColor: BLUE,
+  },
+
+  primaryButtonDisabled: {
+    opacity: 0.65,
+  },
+
+  primaryButtonText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '900',
+  },
+})

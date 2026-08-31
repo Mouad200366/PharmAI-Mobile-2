@@ -10,7 +10,11 @@ import {
 } from 'react-native'
 import { LinearGradient } from 'expo-linear-gradient'
 import { StatusBar } from 'expo-status-bar'
-import { useFocusEffect } from '@react-navigation/native'
+import {
+  useFocusEffect,
+  useNavigation,
+  type NavigationProp,
+} from '@react-navigation/native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import Icon from '../../components/ui/Icon'
@@ -19,6 +23,7 @@ import {
   type DeliveryOrder,
 } from '../../api/delivery'
 import { firstError } from '../../api/errors'
+import type { DeliveryMainStackParamList } from '../../navigation/types'
 
 const brand = {
   navy: '#0B1B63',
@@ -187,11 +192,13 @@ function StatusBadge({ status }: StatusBadgeProps) {
 interface DetailedOrderCardProps {
   order: DeliveryOrder
   active?: boolean
+  onChatPress?: () => void
 }
 
 function DetailedOrderCard({
   order,
   active = false,
+  onChatPress,
 }: DetailedOrderCardProps) {
   const visual = statusVisual(order.status)
 
@@ -316,6 +323,27 @@ function DetailedOrderCard({
         </View>
       </View>
 
+      {active && onChatPress ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Contacter le patient"
+          style={({ pressed }) => [
+            styles.chatButton,
+            pressed && styles.chatButtonPressed,
+          ]}
+          onPress={onChatPress}
+        >
+          <Icon
+            name="chat_bubble_outline"
+            size={18}
+            color={brand.white}
+          />
+          <Text style={styles.chatButtonText}>
+            Contacter le patient
+          </Text>
+        </Pressable>
+      ) : null}
+
       <Text style={styles.orderDate}>
         {formatDate(order.updated_at || order.created_at)}
       </Text>
@@ -412,6 +440,9 @@ function CompactOrderCard({
 
 export default function DeliveryDeliveries() {
   const insets = useSafeAreaInsets()
+  const navigation = useNavigation<
+    NavigationProp<DeliveryMainStackParamList>
+  >()
 
   const [activeOrder, setActiveOrder] =
     useState<DeliveryOrder | null>(null)
@@ -656,6 +687,12 @@ export default function DeliveryDeliveries() {
           <DetailedOrderCard
             order={activeOrder}
             active
+            onChatPress={() => {
+              navigation.navigate('OrderChat', {
+                orderId: activeOrder.id,
+                peerLabel: 'Patient',
+              })
+            }}
           />
         ) : (
           <View style={styles.emptyCard}>
@@ -1239,4 +1276,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: brand.blueSoft,
   },
+  chatButton: {
+    marginTop: 16,
+    minHeight: 46,
+    borderRadius: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: brand.blue,
+  },
+
+  chatButtonPressed: {
+    opacity: 0.8,
+  },
+
+  chatButtonText: {
+    color: brand.white,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+
 })

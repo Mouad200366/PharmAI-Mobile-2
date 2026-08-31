@@ -2,6 +2,8 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
+from apps.notifications.constants import NotificationType
+from apps.notifications.services import notify
 from apps.orders.constants import OrderStatus
 from apps.orders.models import Order
 from apps.orders.services.state_machine import ACTIVE_AGENT_STATUSES
@@ -354,6 +356,15 @@ def accept_offer(*, offer_id, agent):
                                         'delivery_agent',
                                         'updated_at',
                                     )
+                                )
+
+                                notify(
+                                    user=order.customer,
+                                    type=NotificationType.AGENT_ASSIGNED,
+                                    title='Courier assigned',
+                                    body='A courier has been assigned to your order.',
+                                    order_id=order.id,
+                                    agent_name=agent.full_name,
                                 )
 
                                 offer.status = DeliveryOfferStatus.ACCEPTED

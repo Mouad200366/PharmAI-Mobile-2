@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
@@ -10,6 +10,9 @@ import {
   View,
 } from 'react-native'
 import { useFocusEffect } from '@react-navigation/native'
+import { LinearGradient } from 'expo-linear-gradient'
+import { StatusBar } from 'expo-status-bar'
+import { SafeAreaView } from 'react-native-safe-area-context'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 
 import type { MainStackParamList } from '../../navigation/types'
@@ -29,10 +32,16 @@ import { firstError } from '../../api/errors'
 import {
   createOrderTrackingSocket,
   parseOrderTrackingEvent,
+  type OrderLocationUpdateEvent,
 } from '../../api/orderRealtime'
 import { useCartStore } from '../../store/cartStore'
 import { tokenStorage } from '../../store/tokenStorage'
 import Icon from '../../components/ui/Icon'
+import PatientDeliveryPinCard from '../../components/patient/PatientDeliveryPinCard'
+import PatientDeliveryIncidentCard from '../../components/patient/PatientDeliveryIncidentCard'
+import PatientLiveDeliveryCard from '../../components/patient/PatientLiveDeliveryCard'
+import PatientAssignedCourierCard from '../../components/patient/PatientAssignedCourierCard'
+import PatientOrderChatCard from '../../components/patient/PatientOrderChatCard'
 import { colors } from '../../theme/colors'
 
 type Props = NativeStackScreenProps<
@@ -75,7 +84,7 @@ const TERMINAL_PROBLEM_STATUSES: OrderStatus[] = [
 const PROGRESS_STEPS: ProgressStep[] = [
   {
     key: 'received',
-    label: 'Commande reçue',
+    label: 'Reçue',
     description: 'Validation de la commande et de l’ordonnance.',
     icon: 'receipt_long',
   },
@@ -87,7 +96,7 @@ const PROGRESS_STEPS: ProgressStep[] = [
   },
   {
     key: 'ready',
-    label: 'Prête pour livraison',
+    label: 'Prête',
     description: 'La commande attend sa prise en charge.',
     icon: 'local_pharmacy',
   },
@@ -167,12 +176,20 @@ export default function OrderDetail({
   const hasLoadedOnce = useRef(false)
   const realtimeReloadingRef = useRef(false)
 
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerShown: false,
+    })
+  }, [navigation])
+
   const [order, setOrder] = useState<Order | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [cancelling, setCancelling] = useState(false)
   const [reordering, setReordering] = useState(false)
+  const [liveTracking, setLiveTracking] =
+    useState<OrderLocationUpdateEvent | null>(null)
 
   const cartItems = useCartStore((state) => state.items)
   const addItem = useCartStore((state) => state.addItem)
@@ -276,6 +293,21 @@ export default function OrderDetail({
               )
 
               void reloadFromRealtime()
+            }
+
+            if (realtimeEvent.type === 'location_update') {
+              setLiveTracking(realtimeEvent)
+
+              if (realtimeEvent.status) {
+                setOrder((currentOrder) =>
+                  currentOrder
+                    ? {
+                        ...currentOrder,
+                        status: realtimeEvent.status!,
+                      }
+                    : currentOrder,
+                )
+              }
             }
           }
 
@@ -513,328 +545,441 @@ export default function OrderDetail({
   const canReorder = REORDERABLE_STATUSES.includes(order.status)
   const isProblemStatus = TERMINAL_PROBLEM_STATUSES.includes(order.status)
   const currentStage = STAGE_BY_STATUS[order.status] ?? -1
+  const showCourierIdentity =
+    !order.delivery_incident &&
+    Boolean(order.delivery_agent_name) &&
+    (
+      order.status === 'awaiting_agent' ||
+      order.status === 'picked_up' ||
+      order.status === 'out_for_delivery'
+    )
+  const showPin =
+    !order.delivery_incident &&
+    order.status === 'out_for_delivery'
+  const showChat = showCourierIdentity
+
+  const hasLiveDistance =
+    typeof liveTracking?.distance_to_customer_m === 'number' &&
+    Number.isFinite(liveTracking.distance_to_customer_m)
+  const hasLiveEta =
+    typeof liveTracking?.eta_minutes === 'number' &&
+    Number.isFinite(liveTracking.eta_minutes)
+  const liveDeliveryActive =
+    !order.delivery_incident &&
+    (
+      order.status === 'picked_up' ||
+      order.status === 'out_for_delivery'
+    )
 
   return (
-    <ScrollView
-      style={styles.screen}
-      contentContainerStyle={styles.content}
-      showsVerticalScrollIndicator={false}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={handleRefresh}
-          tintColor={colors.primary}
-          colors={[colors.primary]}
-        />
-      }
+    <SafeAreaView
+      style={styles.exactSafeArea}
+      edges={['top']}
     >
-      <View style={styles.headerRow}>
-        <View style={styles.headerTextContainer}>
-          <Text style={styles.eyebrow}>COMMANDE</Text>
-          <Text style={styles.orderTitle}>#{order.id}</Text>
-          <Text style={styles.orderDate}>
-            Passée le {formatDateTime(order.created_at)}
-          </Text>
-        </View>
+      <StatusBar style="light" />
 
-        <View
-          style={[
-            styles.statusBadge,
-            { backgroundColor: statusColors.bg },
-          ]}
-        >
-          <View
-            style={[
-              styles.statusDot,
-              { backgroundColor: statusColors.text },
-            ]}
+      <ScrollView
+        style={styles.exactScreen}
+        contentContainerStyle={styles.exactContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#FFFFFF"
+            colors={['#073BDF']}
           />
-          <Text
-            style={[
-              styles.statusBadgeText,
-              { color: statusColors.text },
-            ]}
-          >
-            {STATUS_LABELS[order.status]}
-          </Text>
-        </View>
-      </View>
-
-      {loadError ? (
-        <InlineError
-          message={loadError}
-          onRetry={handleRefresh}
-        />
-      ) : null}
-
-      <View
-        style={[
-          styles.statusHero,
-          isProblemStatus && styles.problemHero,
-          order.status === 'delivered' && styles.successHero,
-        ]}
+        }
       >
-        <View
-          style={[
-            styles.statusHeroIcon,
-            isProblemStatus && styles.problemHeroIcon,
-            order.status === 'delivered' && styles.successHeroIcon,
-          ]}
+        <LinearGradient
+          colors={['#00236F', '#073BDF', '#087DFF', '#10D1D0']}
+          start={{ x: 0.02, y: 0.08 }}
+          end={{ x: 1, y: 0.92 }}
+          style={styles.exactHeader}
         >
-          <Icon
-            name={getStatusIcon(order.status)}
-            size={28}
-            color={
-              isProblemStatus
-                ? colors.error
-                : order.status === 'delivered'
-                  ? colors.success
-                  : colors.primary
-            }
-          />
-        </View>
+          <View style={styles.exactHeaderOrbLarge} />
+          <View style={styles.exactHeaderOrbSmall} />
 
-        <View style={styles.statusHeroContent}>
-          <Text style={styles.statusHeroTitle}>
-            {STATUS_LABELS[order.status]}
-          </Text>
-          <Text style={styles.statusHeroDescription}>
-            {STATUS_DESCRIPTIONS[order.status]}
-          </Text>
-          <Text style={styles.lastUpdateText}>
-            Dernière mise à jour : {formatDateTime(order.updated_at)}
-          </Text>
-        </View>
-      </View>
-
-      {!isProblemStatus ? (
-        <View style={styles.card}>
-          <SectionHeader
-            icon="timeline"
-            title="Progression de la commande"
-            subtitle="Les étapes sont mises à jour par la pharmacie et le livreur."
-          />
-
-          <View style={styles.timelineContainer}>
-            {PROGRESS_STEPS.map((step, index) => (
-              <ProgressTimelineItem
-                key={step.key}
-                step={step}
-                index={index}
-                isLast={index === PROGRESS_STEPS.length - 1}
-                state={getProgressState(index, currentStage, order.status)}
-              />
-            ))}
-          </View>
-        </View>
-      ) : (
-        <ProblemDetails order={order} />
-      )}
-
-      <TrackingCard status={order.status} />
-
-      <View style={styles.card}>
-        <SectionHeader
-          icon="medication"
-          title="Médicaments"
-          subtitle={`${getTotalQuantity(order)} article${getTotalQuantity(order) > 1 ? 's' : ''} dans cette commande`}
-        />
-
-        <View style={styles.itemsList}>
-          {order.items.map((item, index) => (
-            <View
-              key={item.id}
-              style={[
-                styles.itemRow,
-                index > 0 && styles.itemRowBorder,
+          <View style={styles.exactNavRow}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Retour"
+              style={({ pressed }) => [
+                styles.exactNavButton,
+                pressed && styles.buttonPressed,
               ]}
+              onPress={() => navigation.goBack()}
             >
-              <View style={styles.itemIconContainer}>
-                <Icon
-                  name="medication"
-                  size={20}
-                  color={colors.primary}
-                />
-              </View>
+              <Icon
+                name="arrow_back"
+                size={22}
+                color="#FFFFFF"
+              />
+            </Pressable>
 
-              <View style={styles.itemInformation}>
-                <Text style={styles.itemName}>
-                  {item.medicine_name}
-                </Text>
-                <Text style={styles.itemCalculation}>
-                  {item.quantity} × {formatPrice(item.unit_price)}
-                </Text>
-              </View>
+            <Text style={styles.exactNavTitle}>
+              Détail de la commande
+            </Text>
 
-              <Text style={styles.itemTotal}>
-                {formatPrice(item.line_total)}
+            <View style={styles.exactNavButton}>
+              <Icon
+                name="headset_mic"
+                size={21}
+                color="#FFFFFF"
+              />
+            </View>
+          </View>
+
+          <View style={styles.exactOrderRow}>
+            <View style={styles.exactOrderCopy}>
+              <Text style={styles.exactOrderTitle}>
+                Commande #{order.id}
+              </Text>
+              <Text style={styles.exactOrderDate}>
+                Passée le {formatDateTime(order.created_at)}
               </Text>
             </View>
-          ))}
-        </View>
 
-        <View style={styles.priceDivider} />
-
-        <PriceLine
-          label="Sous-total"
-          value={formatPrice(order.items_total)}
-        />
-        <PriceLine
-          label="Frais de livraison"
-          value={formatPrice(order.delivery_fee)}
-        />
-
-        <View style={styles.totalRow}>
-          <Text style={styles.totalLabel}>Total</Text>
-          <Text style={styles.totalValue}>
-            {formatPrice(order.grand_total)}
-          </Text>
-        </View>
-      </View>
-
-      <View style={styles.card}>
-        <SectionHeader
-          icon="local_shipping"
-          title="Livraison et paiement"
-          subtitle="Informations utilisées lors de la validation de la commande."
-        />
-
-        <InformationRow
-          icon="location_on"
-          label="Adresse de livraison"
-          value={order.delivery_address}
-          multiline
-        />
-
-        <InformationRow
-          icon="payments"
-          label="Mode de paiement"
-          value={
-            order.payment_method === 'cash'
-              ? 'Paiement en espèces à la livraison'
-              : 'Paiement par carte'
-          }
-        />
-
-        <InformationRow
-          icon="event"
-          label="Date de commande"
-          value={formatDateTime(order.created_at)}
-        />
-      </View>
-
-      <PrescriptionCard order={order} />
-
-      {order.notes.trim() ? (
-        <View style={styles.card}>
-          <SectionHeader
-            icon="notes"
-            title="Note de la commande"
-          />
-          <View style={styles.notesContainer}>
-            <Text style={styles.notesText}>
-              {order.notes.trim()}
-            </Text>
+            <View
+              style={[
+                styles.exactStatusBadge,
+                { backgroundColor: statusColors.bg },
+              ]}
+            >
+              <View
+                style={[
+                  styles.exactStatusBadgeDot,
+                  { backgroundColor: statusColors.text },
+                ]}
+              />
+              <Text
+                style={[
+                  styles.exactStatusBadgeText,
+                  { color: statusColors.text },
+                ]}
+                numberOfLines={1}
+              >
+                {STATUS_LABELS[order.status]}
+              </Text>
+            </View>
           </View>
-        </View>
-      ) : null}
+        </LinearGradient>
 
-      <View style={styles.card}>
-        <SectionHeader
-          icon="forum"
-          title="Suivi et messagerie"
-          subtitle="La carte en temps réel et le chat seront connectés dans la prochaine étape."
-        />
+        <View style={styles.exactSheet}>
+          {loadError ? (
+            <InlineError
+              message={loadError}
+              onRetry={handleRefresh}
+            />
+          ) : null}
 
-        <View style={styles.futureFeatureRow}>
-          <View style={styles.futureFeatureIcon}>
-            <Icon
-              name="map"
-              size={20}
-              color={colors.primary}
+          <View
+            style={[
+              styles.exactStatusCard,
+              isProblemStatus && styles.exactProblemStatusCard,
+            ]}
+          >
+            <View style={styles.exactStatusTop}>
+              <View
+                style={[
+                  styles.exactStatusIcon,
+                  isProblemStatus && styles.exactProblemIcon,
+                  order.status === 'delivered' && styles.exactDeliveredIcon,
+                ]}
+              >
+                <Icon
+                  name={getStatusIcon(order.status)}
+                  size={31}
+                  color={
+                    isProblemStatus
+                      ? colors.error
+                      : order.status === 'delivered'
+                        ? colors.success
+                        : '#073BDF'
+                  }
+                />
+              </View>
+
+              <View style={styles.exactStatusCopy}>
+                <Text style={styles.exactStatusKicker}>
+                  Statut actuel
+                </Text>
+                <Text style={styles.exactStatusTitle}>
+                  {STATUS_LABELS[order.status]}
+                </Text>
+                <Text style={styles.exactStatusDescription}>
+                  {STATUS_DESCRIPTIONS[order.status]}
+                </Text>
+
+                {hasLiveEta || hasLiveDistance ? (
+                  <View style={styles.exactLiveFacts}>
+                    {hasLiveDistance ? (
+                      <View style={styles.exactLiveFact}>
+                        <Icon
+                          name="route"
+                          size={14}
+                          color="#073BDF"
+                        />
+                        <Text style={styles.exactLiveFactText}>
+                          {formatDistance(
+                            liveTracking?.distance_to_customer_m,
+                          )}
+                        </Text>
+                      </View>
+                    ) : null}
+
+                    {hasLiveEta ? (
+                      <View style={styles.exactLiveFact}>
+                        <Icon
+                          name="schedule"
+                          size={14}
+                          color="#073BDF"
+                        />
+                        <Text style={styles.exactLiveFactText}>
+                          {Math.max(
+                            1,
+                            Math.round(liveTracking?.eta_minutes ?? 0),
+                          )} min
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+              </View>
+            </View>
+
+            {!isProblemStatus ? (
+              <>
+                <View style={styles.exactProgressDivider} />
+                <OrderProgressOverview
+                  currentStage={currentStage}
+                  status={order.status}
+                />
+              </>
+            ) : null}
+          </View>
+
+          {isProblemStatus ? (
+            <ProblemDetails order={order} />
+          ) : null}
+
+          {order.delivery_incident ? (
+            <PatientDeliveryIncidentCard
+              incident={order.delivery_incident}
+            />
+          ) : null}
+
+          {!order.delivery_incident && liveDeliveryActive ? (
+            <PatientLiveDeliveryCard
+              status={order.status}
+              tracking={liveTracking}
+              deliveryLatitude={order.delivery_latitude}
+              deliveryLongitude={order.delivery_longitude}
+            />
+          ) : null}
+
+          {!order.delivery_incident && showCourierIdentity && order.delivery_agent_name ? (
+            <PatientAssignedCourierCard
+              name={order.delivery_agent_name}
+            />
+          ) : null}
+
+          {!order.delivery_incident && showPin ? (
+            <PatientDeliveryPinCard orderId={order.id} />
+          ) : null}
+
+          {!order.delivery_incident && showChat && order.delivery_agent_name ? (
+            <PatientOrderChatCard
+              courierName={order.delivery_agent_name}
+              onPress={() => {
+                navigation.navigate('OrderChat', {
+                  orderId: order.id,
+                  peerLabel: order.delivery_agent_name ?? 'Livreur',
+                })
+              }}
+            />
+          ) : null}
+
+          <View style={styles.exactSection}>
+            <View style={styles.exactSectionHeading}>
+              <Text style={styles.exactSectionTitle}>
+                Articles commandés ({getTotalQuantity(order)})
+              </Text>
+            </View>
+
+            <View style={styles.exactItemsCard}>
+              {order.items.map((item, index) => (
+                <View
+                  key={item.id}
+                  style={[
+                    styles.exactItemRow,
+                    index > 0 && styles.exactItemRowBorder,
+                  ]}
+                >
+                  <View style={styles.exactItemIcon}>
+                    <Icon
+                      name="medication"
+                      size={21}
+                      color="#073BDF"
+                    />
+                  </View>
+
+                  <View style={styles.exactItemCopy}>
+                    <Text style={styles.exactItemName} numberOfLines={2}>
+                      {item.medicine_name}
+                    </Text>
+                    <Text style={styles.exactItemMeta}>
+                      {item.quantity} × {formatPrice(item.unit_price)}
+                    </Text>
+                  </View>
+
+                  <Text style={styles.exactItemTotal}>
+                    {formatPrice(item.line_total)}
+                  </Text>
+                </View>
+              ))}
+
+              <View style={styles.exactPriceSummary}>
+                <PriceLine
+                  label="Sous-total"
+                  value={formatPrice(order.items_total)}
+                />
+                <PriceLine
+                  label="Frais de livraison"
+                  value={formatPrice(order.delivery_fee)}
+                />
+
+                <View style={styles.exactTotalRow}>
+                  <Text style={styles.exactTotalLabel}>Total</Text>
+                  <Text style={styles.exactTotalValue}>
+                    {formatPrice(order.grand_total)}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.exactInfoCard}>
+            <SectionHeader
+              icon="local_shipping"
+              title="Livraison et paiement"
+              subtitle="Informations validées pour cette commande."
+            />
+
+            <InformationRow
+              icon="location_on"
+              label="Adresse de livraison"
+              value={order.delivery_address}
+              multiline
+            />
+
+            <InformationRow
+              icon="payments"
+              label="Mode de paiement"
+              value={
+                order.payment_method === 'cash'
+                  ? 'Paiement en espèces à la livraison'
+                  : 'Paiement par carte'
+              }
+            />
+
+            <InformationRow
+              icon="event"
+              label="Date de commande"
+              value={formatDateTime(order.created_at)}
             />
           </View>
-          <View style={styles.futureFeatureTextContainer}>
-            <Text style={styles.futureFeatureTitle}>
-              Aucune information fictive
-            </Text>
-            <Text style={styles.futureFeatureText}>
-              Cette page affiche uniquement les données réellement disponibles dans votre commande.
-            </Text>
-          </View>
-        </View>
-      </View>
 
-      {(canCancel || canReorder) ? (
-        <View style={styles.actionsCard}>
-          <Text style={styles.actionsTitle}>
-            Actions disponibles
-          </Text>
+          <PrescriptionCard order={order} />
 
-          {canReorder ? (
-            <Pressable
-              style={({ pressed }) => [
-                styles.primaryAction,
-                pressed && styles.buttonPressed,
-                reordering && styles.buttonDisabled,
-              ]}
-              onPress={() => {
-                void handleReorder()
-              }}
-              disabled={reordering}
-            >
-              {reordering ? (
-                <ActivityIndicator
-                  size="small"
-                  color={colors.white}
-                />
-              ) : (
-                <Icon
-                  name="shopping_cart"
-                  size={19}
-                  color={colors.white}
-                />
-              )}
-              <Text style={styles.primaryActionText}>
-                {reordering
-                  ? 'Préparation du panier…'
-                  : 'Ajouter à nouveau au panier'}
-              </Text>
-            </Pressable>
+          {order.notes.trim() ? (
+            <View style={styles.exactInfoCard}>
+              <SectionHeader
+                icon="notes"
+                title="Note de la commande"
+              />
+              <View style={styles.notesContainer}>
+                <Text style={styles.notesText}>
+                  {order.notes.trim()}
+                </Text>
+              </View>
+            </View>
           ) : null}
 
-          {canCancel ? (
-            <Pressable
-              style={({ pressed }) => [
-                styles.cancelAction,
-                pressed && styles.buttonPressed,
-                cancelling && styles.buttonDisabled,
-              ]}
-              onPress={confirmCancel}
-              disabled={cancelling}
-            >
-              {cancelling ? (
-                <ActivityIndicator
-                  size="small"
-                  color={colors.error}
-                />
-              ) : (
-                <Icon
-                  name="cancel"
-                  size={19}
-                  color={colors.error}
-                />
-              )}
-              <Text style={styles.cancelActionText}>
-                {cancelling
-                  ? 'Annulation…'
-                  : 'Annuler la commande'}
+          {(canCancel || canReorder) ? (
+            <View style={styles.exactActionsCard}>
+              <Text style={styles.exactSectionTitle}>
+                Actions disponibles
               </Text>
-            </Pressable>
+
+              {canReorder ? (
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.primaryAction,
+                    styles.exactPrimaryAction,
+                    pressed && styles.buttonPressed,
+                    reordering && styles.buttonDisabled,
+                  ]}
+                  onPress={() => {
+                    void handleReorder()
+                  }}
+                  disabled={reordering}
+                >
+                  {reordering ? (
+                    <ActivityIndicator
+                      size="small"
+                      color="#FFFFFF"
+                    />
+                  ) : (
+                    <Icon
+                      name="shopping_cart"
+                      size={19}
+                      color="#FFFFFF"
+                    />
+                  )}
+                  <Text style={styles.primaryActionText}>
+                    {reordering
+                      ? 'Préparation du panier…'
+                      : 'Ajouter à nouveau au panier'}
+                  </Text>
+                </Pressable>
+              ) : null}
+
+              {canCancel ? (
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.cancelAction,
+                    styles.exactCancelAction,
+                    pressed && styles.buttonPressed,
+                    cancelling && styles.buttonDisabled,
+                  ]}
+                  onPress={confirmCancel}
+                  disabled={cancelling}
+                >
+                  {cancelling ? (
+                    <ActivityIndicator
+                      size="small"
+                      color={colors.error}
+                    />
+                  ) : (
+                    <Icon
+                      name="cancel"
+                      size={19}
+                      color={colors.error}
+                    />
+                  )}
+                  <Text style={styles.cancelActionText}>
+                    {cancelling
+                      ? 'Annulation…'
+                      : 'Annuler la commande'}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
           ) : null}
         </View>
-      ) : null}
-    </ScrollView>
+      </ScrollView>
+    </SafeAreaView>
   )
 }
 
@@ -950,6 +1095,33 @@ function InlineError({
   )
 }
 
+function SectionLabel({
+  eyebrow,
+  title,
+  subtitle,
+}: {
+  eyebrow: string
+  title: string
+  subtitle?: string
+}) {
+  return (
+    <View style={styles.mockupSectionLabel}>
+      <Text style={styles.mockupSectionEyebrow}>
+        {eyebrow}
+      </Text>
+      <Text style={styles.mockupSectionTitle}>
+        {title}
+      </Text>
+      {subtitle ? (
+        <Text style={styles.mockupSectionSubtitle}>
+          {subtitle}
+        </Text>
+      ) : null}
+    </View>
+  )
+}
+
+
 function SectionHeader({
   icon,
   title,
@@ -960,20 +1132,20 @@ function SectionHeader({
   subtitle?: string
 }) {
   return (
-    <View style={styles.sectionHeader}>
-      <View style={styles.sectionHeaderIcon}>
+    <View style={styles.literalInfoHeader}>
+      <View style={styles.literalInfoHeaderIcon}>
         <Icon
           name={icon}
-          size={19}
-          color={colors.primary}
+          size={18}
+          color="#073BDF"
         />
       </View>
-      <View style={styles.sectionHeaderTextContainer}>
-        <Text style={styles.sectionTitle}>
+      <View style={styles.literalInfoHeaderCopy}>
+        <Text style={styles.literalInfoHeaderTitle}>
           {title}
         </Text>
         {subtitle ? (
-          <Text style={styles.sectionSubtitle}>
+          <Text style={styles.literalInfoHeaderSubtitle}>
             {subtitle}
           </Text>
         ) : null}
@@ -982,100 +1154,100 @@ function SectionHeader({
   )
 }
 
-function ProgressTimelineItem({
-  step,
-  index,
-  isLast,
-  state,
+function OrderProgressOverview({
+  currentStage,
+  status,
 }: {
-  step: ProgressStep
-  index: number
-  isLast: boolean
-  state: 'completed' | 'current' | 'upcoming'
+  currentStage: number
+  status: OrderStatus
 }) {
-  const isCompleted = state === 'completed'
-  const isCurrent = state === 'current'
-
   return (
-    <View style={styles.timelineRow}>
-      <View style={styles.timelineRail}>
-        <View
-          style={[
-            styles.timelineCircle,
-            isCompleted && styles.timelineCircleCompleted,
-            isCurrent && styles.timelineCircleCurrent,
-          ]}
-        >
-          <Icon
-            name={isCompleted ? 'check' : step.icon}
-            size={isCompleted ? 15 : 16}
-            color={
-              isCompleted || isCurrent
-                ? colors.white
-                : colors.textMuted
-            }
-          />
-        </View>
+    <View style={styles.literalProgress}>
+      {PROGRESS_STEPS.map((step, index) => {
+        const state = getProgressState(
+          index,
+          currentStage,
+          status,
+        )
+        const completed = state === 'completed'
+        const current = state === 'current'
+        const lineActive =
+          status === 'delivered' ||
+          index < currentStage
 
-        {!isLast ? (
+        return (
           <View
-            style={[
-              styles.timelineLine,
-              isCompleted && styles.timelineLineCompleted,
-            ]}
-          />
-        ) : null}
-      </View>
-
-      <View
-        style={[
-          styles.timelineContent,
-          !isLast && styles.timelineContentSpacing,
-        ]}
-      >
-        <View style={styles.timelineTitleRow}>
-          <Text
-            style={[
-              styles.timelineTitle,
-              isCurrent && styles.timelineTitleCurrent,
-              state === 'upcoming' && styles.timelineTitleUpcoming,
-            ]}
+            key={step.key}
+            style={styles.literalProgressStep}
           >
-            {step.label}
-          </Text>
+            <View style={styles.literalProgressRail}>
+              {index > 0 ? (
+                <View
+                  style={[
+                    styles.literalProgressLine,
+                    (
+                      status === 'delivered' ||
+                      index <= currentStage
+                    ) &&
+                      styles.literalProgressLineActive,
+                  ]}
+                />
+              ) : (
+                <View style={styles.literalProgressSpacer} />
+              )}
 
-          <View
-            style={[
-              styles.timelineStateBadge,
-              isCompleted && styles.completedBadge,
-              isCurrent && styles.currentBadge,
-            ]}
-          >
+              <View
+                style={[
+                  styles.literalProgressDot,
+                  (completed || current) &&
+                    styles.literalProgressDotActive,
+                  current &&
+                    styles.literalProgressDotCurrent,
+                ]}
+              >
+                {completed ? (
+                  <Icon
+                    name="check"
+                    size={11}
+                    color="#FFFFFF"
+                  />
+                ) : current ? (
+                  <View style={styles.literalProgressCenter} />
+                ) : (
+                  <Icon
+                    name={step.icon}
+                    size={10}
+                    color="#9AA7B9"
+                  />
+                )}
+              </View>
+
+              {index < PROGRESS_STEPS.length - 1 ? (
+                <View
+                  style={[
+                    styles.literalProgressLine,
+                    lineActive &&
+                      styles.literalProgressLineActive,
+                  ]}
+                />
+              ) : (
+                <View style={styles.literalProgressSpacer} />
+              )}
+            </View>
+
             <Text
               style={[
-                styles.timelineStateText,
-                isCompleted && styles.completedBadgeText,
-                isCurrent && styles.currentBadgeText,
+                styles.literalProgressLabel,
+                current &&
+                  styles.literalProgressLabelCurrent,
               ]}
+              numberOfLines={2}
             >
-              {isCompleted
-                ? 'Terminée'
-                : isCurrent
-                  ? 'En cours'
-                  : 'À venir'}
+              {step.label}
             </Text>
           </View>
-        </View>
-
-        <Text
-          style={[
-            styles.timelineDescription,
-            state === 'upcoming' && styles.timelineDescriptionUpcoming,
-          ]}
-        >
-          {step.description}
-        </Text>
-      </View>
+        )
+      })}
     </View>
   )
 }
@@ -1085,15 +1257,13 @@ function TrackingCard({
 }: {
   status: OrderStatus
 }) {
-  const activeDelivery =
-    status === 'picked_up' ||
-    status === 'out_for_delivery'
-
   const waitingForDelivery =
     status === 'ready_for_pickup' ||
     status === 'awaiting_agent'
 
   if (
+    status === 'picked_up' ||
+    status === 'out_for_delivery' ||
     status === 'delivered' ||
     TERMINAL_PROBLEM_STATUSES.includes(status)
   ) {
@@ -1101,29 +1271,29 @@ function TrackingCard({
   }
 
   return (
-    <View style={styles.trackingCard}>
-      <View style={styles.trackingIconContainer}>
+    <View style={styles.literalPreDelivery}>
+      <View style={styles.literalPreDeliveryIcon}>
         <Icon
-          name={activeDelivery ? 'near_me' : 'location_searching'}
-          size={26}
-          color={colors.primary}
+          name={
+            waitingForDelivery
+              ? 'person_search'
+              : 'location_searching'
+          }
+          size={19}
+          color="#073BDF"
         />
       </View>
 
-      <View style={styles.trackingContent}>
-        <Text style={styles.trackingTitle}>
-          {activeDelivery
-            ? 'Livraison en cours'
-            : waitingForDelivery
-              ? 'Préparation du suivi'
-              : 'Suivi en direct à venir'}
+      <View style={styles.literalPreDeliveryCopy}>
+        <Text style={styles.literalPreDeliveryTitle}>
+          {waitingForDelivery
+            ? 'Attribution du livreur'
+            : 'Suivi en direct à venir'}
         </Text>
-        <Text style={styles.trackingDescription}>
-          {activeDelivery
-            ? 'Le statut réel est disponible. La carte, la position du livreur et l’heure estimée seront connectées dans l’étape temps réel.'
-            : waitingForDelivery
-              ? 'Le suivi en direct deviendra disponible quand un livreur prendra en charge la commande.'
-              : 'La commande doit d’abord être préparée avant le démarrage du suivi de livraison.'}
+        <Text style={styles.literalPreDeliveryText}>
+          {waitingForDelivery
+            ? 'La carte s’activera dès qu’un livreur prendra en charge la commande.'
+            : 'La carte s’activera lorsque la commande entrera en phase de livraison.'}
         </Text>
       </View>
     </View>
@@ -1139,7 +1309,7 @@ function ProblemDetails({
     order.prescription?.rejection_reason?.trim()
 
   return (
-    <View style={[styles.card, styles.problemCard]}>
+    <View style={[styles.exactInfoCard, styles.problemCard]}>
       <SectionHeader
         icon="info"
         title="Informations sur cette commande"
@@ -1179,21 +1349,21 @@ function InformationRow({
   multiline?: boolean
 }) {
   return (
-    <View style={styles.informationRow}>
-      <View style={styles.informationIconContainer}>
+    <View style={styles.literalInformationRow}>
+      <View style={styles.literalInformationIcon}>
         <Icon
           name={icon}
-          size={18}
-          color={colors.primary}
+          size={17}
+          color="#073BDF"
         />
       </View>
 
-      <View style={styles.informationTextContainer}>
-        <Text style={styles.informationLabel}>
+      <View style={styles.literalInformationCopy}>
+        <Text style={styles.literalInformationLabel}>
           {label}
         </Text>
         <Text
-          style={styles.informationValue}
+          style={styles.literalInformationValue}
           numberOfLines={multiline ? undefined : 2}
         >
           {value}
@@ -1210,7 +1380,7 @@ function PrescriptionCard({
 }) {
   if (order.prescription_mode === 'none') {
     return (
-      <View style={styles.card}>
+      <View style={styles.exactInfoCard}>
         <SectionHeader
           icon="description"
           title="Ordonnance"
@@ -1226,7 +1396,7 @@ function PrescriptionCard({
 
   if (order.prescription_mode === 'pickup') {
     return (
-      <View style={styles.card}>
+      <View style={styles.exactInfoCard}>
         <SectionHeader
           icon="description"
           title="Ordonnance"
@@ -1247,7 +1417,7 @@ function PrescriptionCard({
     PRESCRIPTION_STATUS_CONFIG[prescriptionStatus]
 
   return (
-    <View style={styles.card}>
+    <View style={styles.exactInfoCard}>
       <SectionHeader
         icon="description"
         title="Ordonnance"
@@ -1303,11 +1473,11 @@ function PriceLine({
   value: string
 }) {
   return (
-    <View style={styles.priceLine}>
-      <Text style={styles.priceLineLabel}>
+    <View style={styles.literalPriceLine}>
+      <Text style={styles.literalPriceLineLabel}>
         {label}
       </Text>
-      <Text style={styles.priceLineValue}>
+      <Text style={styles.literalPriceLineValue}>
         {value}
       </Text>
     </View>
@@ -1359,6 +1529,26 @@ function getTotalQuantity(order: Order) {
     0,
   )
 }
+
+function formatDistance(
+  value: number | null | undefined,
+) {
+  if (
+    typeof value !== 'number' ||
+    !Number.isFinite(value)
+  ) {
+    return 'Distance indisponible'
+  }
+
+  if (value < 1000) {
+    return `${Math.max(0, Math.round(value))} m`
+  }
+
+  return `${(Math.max(0, value) / 1000)
+    .toFixed(1)
+    .replace('.', ',')} km`
+}
+
 
 function formatDateTime(value: string) {
   const date = new Date(value)
@@ -1428,11 +1618,12 @@ function getActionErrorMessage(
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: colors.surface,
+    backgroundColor: '#F7FAFF',
   },
   content: {
-    padding: 16,
-    paddingBottom: 40,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 44,
     gap: 16,
   },
 
@@ -1442,49 +1633,53 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 28,
     gap: 10,
-    backgroundColor: colors.surface,
+    backgroundColor: '#F7FAFF',
   },
   centeredIconContainer: {
-    width: 58,
-    height: 58,
-    borderRadius: 18,
+    width: 62,
+    height: 62,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#eef2ff',
-    marginBottom: 2,
+    marginBottom: 4,
+    borderWidth: 1,
+    borderColor: '#D7E6F8',
+    borderRadius: 20,
+    backgroundColor: '#EEF5FF',
   },
   centeredErrorIconContainer: {
-    backgroundColor: colors.errorBg,
+    borderColor: '#FECACA',
+    backgroundColor: '#FEF2F2',
   },
   centeredTitle: {
+    marginTop: 8,
     fontSize: 18,
-    fontWeight: '700',
-    color: colors.textPrimary,
+    fontWeight: '900',
     textAlign: 'center',
+    color: '#0B1F4D',
   },
   centeredText: {
     maxWidth: 330,
-    fontSize: 13,
-    lineHeight: 19,
-    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18,
     textAlign: 'center',
+    color: '#657791',
   },
   retryButton: {
-    minWidth: 150,
-    marginTop: 8,
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-    borderRadius: 12,
-    backgroundColor: colors.primary,
+    minWidth: 154,
+    minHeight: 46,
+    marginTop: 10,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
+    paddingHorizontal: 18,
+    borderRadius: 14,
+    backgroundColor: '#073BDF',
   },
   retryButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.white,
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#FFFFFF',
   },
   secondaryBackButton: {
     flexDirection: 'row',
@@ -1495,57 +1690,159 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   secondaryBackButtonText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.primary,
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#073BDF',
   },
 
-  headerRow: {
+  orderHero: {
+    position: 'relative',
+    overflow: 'hidden',
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 18,
+    borderRadius: 28,
+
+    shadowColor: '#073BDF',
+    shadowOffset: {
+      width: 0,
+      height: 8,
+    },
+    shadowOpacity: 0.16,
+    shadowRadius: 16,
+    elevation: 5,
+  },
+  heroGlowLarge: {
+    position: 'absolute',
+    top: -110,
+    right: -80,
+    width: 280,
+    height: 280,
+    borderRadius: 140,
+    backgroundColor: 'rgba(255,255,255,0.10)',
+  },
+  heroGlowSmall: {
+    position: 'absolute',
+    right: 140,
+    bottom: -120,
+    width: 220,
+    height: 220,
+    borderRadius: 110,
+    backgroundColor: 'rgba(255,255,255,0.07)',
+  },
+  heroTopRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 12,
   },
-  headerTextContainer: {
+  heroIdentity: {
     flex: 1,
+    minWidth: 0,
   },
-  eyebrow: {
+  heroEyebrow: {
     fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1.2,
-    color: colors.textMuted,
+    lineHeight: 13,
+    fontWeight: '900',
+    letterSpacing: 1.1,
+    color: '#D9F9FF',
   },
-  orderTitle: {
-    marginTop: 2,
-    fontSize: 28,
+  heroTitle: {
+    marginTop: 6,
+    fontSize: 27,
     lineHeight: 32,
-    fontWeight: '800',
-    color: colors.primary,
+    fontWeight: '900',
+    letterSpacing: -0.6,
+    color: '#FFFFFF',
   },
-  orderDate: {
-    marginTop: 5,
-    fontSize: 12,
-    color: colors.textSecondary,
-  },
-  statusBadge: {
-    maxWidth: '52%',
+  heroStatusPill: {
+    maxWidth: '42%',
+    minHeight: 34,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.70)',
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.91)',
   },
-  statusDot: {
+  heroStatusDot: {
     width: 7,
     height: 7,
     borderRadius: 4,
   },
-  statusBadgeText: {
+  heroStatusText: {
     flexShrink: 1,
-    fontSize: 11,
-    fontWeight: '800',
-    textAlign: 'center',
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '900',
+  },
+  heroDescription: {
+    maxWidth: 330,
+    marginTop: 10,
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: '#F0FBFF',
+  },
+  heroUpdateRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  heroUpdateText: {
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '700',
+    color: '#E9F9FF',
+  },
+  heroLiveStrip: {
+    minHeight: 74,
+    marginTop: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 11,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.62)',
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.91)',
+  },
+  heroLiveIcon: {
+    width: 43,
+    height: 43,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: '#EAF3FF',
+  },
+  heroLiveContent: {
+    flex: 1,
+    minWidth: 0,
+  },
+  heroLiveTitle: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '900',
+    color: '#0B1F4D',
+  },
+  heroLiveText: {
+    marginTop: 3,
+    fontSize: 9,
+    lineHeight: 13,
+    fontWeight: '600',
+    color: '#657791',
+  },
+  heroLivePulse: {
+    width: 11,
+    height: 11,
+    borderWidth: 3,
+    borderColor: '#D8FAFF',
+    borderRadius: 6,
+    backgroundColor: '#10D1D0',
   },
 
   inlineError: {
@@ -1554,82 +1851,214 @@ const styles = StyleSheet.create({
     gap: 9,
     padding: 12,
     borderWidth: 1,
-    borderColor: '#fecaca',
-    borderRadius: 12,
-    backgroundColor: colors.errorBg,
+    borderColor: '#FECACA',
+    borderRadius: 14,
+    backgroundColor: '#FEF2F2',
   },
   inlineErrorText: {
     flex: 1,
-    fontSize: 12,
-    lineHeight: 17,
-    color: colors.errorText,
+    fontSize: 11,
+    lineHeight: 16,
+    color: '#991B1B',
   },
   inlineErrorAction: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: colors.error,
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#D92D20',
   },
 
-  statusHero: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 13,
-    padding: 16,
-    borderRadius: 18,
+  progressCard: {
+    paddingHorizontal: 14,
+    paddingTop: 15,
+    paddingBottom: 16,
     borderWidth: 1,
-    borderColor: '#c7d2fe',
-    backgroundColor: '#eef2ff',
+    borderColor: '#DCE8F7',
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+
+    shadowColor: '#12366F',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 2,
   },
-  problemHero: {
-    borderColor: '#fecaca',
-    backgroundColor: colors.errorBg,
+  cardHeadingRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: 10,
   },
-  successHero: {
-    borderColor: '#bbf7d0',
-    backgroundColor: colors.successBg,
+  sectionEyebrow: {
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '900',
+    letterSpacing: 1.0,
+    color: '#087DFF',
   },
-  statusHeroIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 15,
+  sectionHeadingTitle: {
+    marginTop: 2,
+    fontSize: 18,
+    lineHeight: 23,
+    fontWeight: '900',
+    letterSpacing: -0.3,
+    color: '#0B1F4D',
+  },
+  sectionHeadingSubtitle: {
+    marginTop: 4,
+    maxWidth: 330,
+    fontSize: 10,
+    lineHeight: 15,
+    fontWeight: '600',
+    color: '#657791',
+  },
+  stepPill: {
+    minHeight: 30,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.white,
+    paddingHorizontal: 9,
+    borderRadius: 10,
+    backgroundColor: '#EEF5FF',
   },
-  problemHeroIcon: {
-    backgroundColor: '#fff5f5',
+  stepPillText: {
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '900',
+    color: '#073BDF',
   },
-  successHeroIcon: {
-    backgroundColor: '#f7fff9',
+  progressOverview: {
+    marginTop: 18,
+    flexDirection: 'row',
   },
-  statusHeroContent: {
+  progressOverviewStep: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  progressOverviewRail: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  progressOverviewConnector: {
+    flex: 1,
+    height: 3,
+    backgroundColor: '#DDE7F2',
+  },
+  progressOverviewConnectorActive: {
+    backgroundColor: '#087DFF',
+  },
+  progressOverviewConnectorSpacer: {
+    flex: 1,
+    height: 3,
+    backgroundColor: 'transparent',
+  },
+  progressOverviewDot: {
+    width: 25,
+    height: 25,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2.5,
+    borderColor: '#DDE7F2',
+    borderRadius: 13,
+    backgroundColor: '#FFFFFF',
+  },
+  progressOverviewDotActive: {
+    borderColor: '#087DFF',
+    backgroundColor: '#087DFF',
+  },
+  progressOverviewDotCurrent: {
+    borderColor: '#087DFF',
+    backgroundColor: '#FFFFFF',
+  },
+  progressOverviewCurrentCenter: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10D1D0',
+  },
+  progressOverviewLabel: {
+    minHeight: 28,
+    marginTop: 7,
+    paddingHorizontal: 2,
+    fontSize: 7.5,
+    lineHeight: 10,
+    fontWeight: '700',
+    textAlign: 'center',
+    color: '#8491A8',
+  },
+  progressOverviewLabelCurrent: {
+    color: '#073BDF',
+    fontWeight: '900',
+  },
+
+  deliverySection: {
+    gap: 12,
+  },
+  securitySection: {
+    gap: 12,
+  },
+  prioritySection: {
+    gap: 12,
+  },
+  sectionHeadingBlock: {
+    paddingHorizontal: 2,
+  },
+
+  trackingCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 11,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#BCECF4',
+    borderRadius: 18,
+    backgroundColor: '#ECFCFF',
+  },
+  trackingIconContainer: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+  },
+  trackingContent: {
     flex: 1,
   },
-  statusHeroTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: colors.textPrimary,
-  },
-  statusHeroDescription: {
-    marginTop: 4,
+  trackingTitle: {
     fontSize: 13,
-    lineHeight: 19,
-    color: colors.textSecondary,
+    lineHeight: 17,
+    fontWeight: '900',
+    color: '#073BDF',
   },
-  lastUpdateText: {
-    marginTop: 8,
+  trackingDescription: {
+    marginTop: 4,
     fontSize: 10,
+    lineHeight: 16,
     fontWeight: '600',
-    color: colors.textMuted,
+    color: '#657791',
   },
 
   card: {
-    padding: 16,
+    paddingHorizontal: 15,
+    paddingTop: 15,
+    paddingBottom: 15,
     gap: 14,
     borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    borderRadius: 18,
-    backgroundColor: colors.surfaceLowest,
+    borderColor: '#DCE8F7',
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+
+    shadowColor: '#12366F',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.045,
+    shadowRadius: 9,
+    elevation: 1,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -1637,200 +2066,85 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   sectionHeaderIcon: {
-    width: 35,
-    height: 35,
-    borderRadius: 11,
+    width: 38,
+    height: 38,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#eef2ff',
+    borderWidth: 1,
+    borderColor: '#D8E8FF',
+    borderRadius: 12,
+    backgroundColor: '#EEF5FF',
   },
   sectionHeaderTextContainer: {
     flex: 1,
   },
   sectionTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: colors.textPrimary,
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '900',
+    color: '#0B1F4D',
   },
   sectionSubtitle: {
     marginTop: 2,
-    fontSize: 11,
-    lineHeight: 16,
-    color: colors.textSecondary,
-  },
-
-  timelineContainer: {
-    paddingTop: 2,
-  },
-  timelineRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  timelineRail: {
-    width: 32,
-    alignItems: 'center',
-  },
-  timelineCircle: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    backgroundColor: colors.surface,
-  },
-  timelineCircleCompleted: {
-    borderColor: colors.success,
-    backgroundColor: colors.success,
-  },
-  timelineCircleCurrent: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primary,
-  },
-  timelineLine: {
-    width: 2,
-    flex: 1,
-    minHeight: 30,
-    marginVertical: 4,
-    backgroundColor: colors.outlineVariant,
-  },
-  timelineLineCompleted: {
-    backgroundColor: colors.success,
-  },
-  timelineContent: {
-    flex: 1,
-    paddingTop: 3,
-  },
-  timelineContentSpacing: {
-    paddingBottom: 18,
-  },
-  timelineTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-  timelineTitle: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  timelineTitleCurrent: {
-    color: colors.primary,
-  },
-  timelineTitleUpcoming: {
-    color: colors.textMuted,
-  },
-  timelineDescription: {
-    marginTop: 4,
-    fontSize: 11,
-    lineHeight: 16,
-    color: colors.textSecondary,
-  },
-  timelineDescriptionUpcoming: {
-    color: colors.textMuted,
-  },
-  timelineStateBadge: {
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 999,
-    backgroundColor: colors.surface,
-  },
-  completedBadge: {
-    backgroundColor: colors.successBg,
-  },
-  currentBadge: {
-    backgroundColor: '#eef2ff',
-  },
-  timelineStateText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: colors.textMuted,
-  },
-  completedBadgeText: {
-    color: colors.success,
-  },
-  currentBadgeText: {
-    color: colors.primary,
-  },
-
-  trackingCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#a5f3fc',
-    borderRadius: 18,
-    backgroundColor: '#ecfeff',
-  },
-  trackingIconContainer: {
-    width: 46,
-    height: 46,
-    borderRadius: 15,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.white,
-  },
-  trackingContent: {
-    flex: 1,
-  },
-  trackingTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: colors.primary,
-  },
-  trackingDescription: {
-    marginTop: 4,
-    fontSize: 12,
-    lineHeight: 18,
-    color: colors.textSecondary,
+    fontSize: 10,
+    lineHeight: 15,
+    fontWeight: '600',
+    color: '#657791',
   },
 
   itemsList: {
-    gap: 0,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#E6EDF7',
+    borderRadius: 15,
+    backgroundColor: '#FBFDFF',
   },
   itemRow: {
+    minHeight: 68,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 11,
-    paddingVertical: 11,
+    gap: 10,
+    paddingHorizontal: 11,
+    paddingVertical: 10,
   },
   itemRowBorder: {
     borderTopWidth: 1,
-    borderTopColor: colors.outlineVariant,
+    borderTopColor: '#E6EDF7',
   },
   itemIconContainer: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
+    width: 40,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#eef2ff',
+    borderRadius: 13,
+    backgroundColor: '#EEF5FF',
   },
   itemInformation: {
     flex: 1,
+    minWidth: 0,
   },
   itemName: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.textPrimary,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '900',
+    color: '#0B1F4D',
   },
   itemCalculation: {
     marginTop: 3,
-    fontSize: 11,
-    color: colors.textSecondary,
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '600',
+    color: '#657791',
   },
   itemTotal: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: colors.primary,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '900',
+    color: '#073BDF',
   },
   priceDivider: {
     height: 1,
-    backgroundColor: colors.outlineVariant,
+    backgroundColor: '#E6EDF7',
   },
   priceLine: {
     flexDirection: 'row',
@@ -1838,166 +2152,156 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   priceLineLabel: {
-    fontSize: 12,
-    color: colors.textSecondary,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '600',
+    color: '#657791',
   },
   priceLineValue: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textPrimary,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '800',
+    color: '#0B1F4D',
   },
   totalRow: {
+    minHeight: 52,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: colors.outlineVariant,
+    borderTopColor: '#E6EDF7',
   },
   totalLabel: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: colors.textPrimary,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '900',
+    color: '#0B1F4D',
   },
   totalValue: {
-    fontSize: 20,
+    fontSize: 19,
+    lineHeight: 23,
     fontWeight: '900',
-    color: colors.primary,
+    letterSpacing: -0.3,
+    color: '#073BDF',
   },
 
   informationRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 11,
+    gap: 10,
+    paddingHorizontal: 11,
+    paddingVertical: 10,
+    borderRadius: 14,
+    backgroundColor: '#F8FBFF',
   },
   informationIconContainer: {
     width: 34,
     height: 34,
-    borderRadius: 11,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.surface,
+    borderRadius: 11,
+    backgroundColor: '#EEF5FF',
   },
   informationTextContainer: {
     flex: 1,
   },
   informationLabel: {
-    fontSize: 10,
-    fontWeight: '700',
+    fontSize: 8,
+    lineHeight: 11,
+    fontWeight: '900',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
-    color: colors.textMuted,
+    color: '#8491A8',
   },
   informationValue: {
     marginTop: 3,
-    fontSize: 13,
-    lineHeight: 19,
-    fontWeight: '600',
-    color: colors.textPrimary,
+    fontSize: 11,
+    lineHeight: 17,
+    fontWeight: '700',
+    color: '#0B1F4D',
   },
 
   prescriptionStatus: {
+    minHeight: 48,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     paddingHorizontal: 12,
-    paddingVertical: 11,
-    borderRadius: 12,
+    borderRadius: 13,
   },
   prescriptionStatusText: {
     flex: 1,
-    fontSize: 13,
-    fontWeight: '800',
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '900',
   },
   prescriptionVerifiedAt: {
-    fontSize: 11,
-    color: colors.textSecondary,
+    fontSize: 10,
+    lineHeight: 14,
+    color: '#657791',
   },
   rejectionReasonContainer: {
     padding: 12,
-    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#fecaca',
-    backgroundColor: '#fff7f7',
+    borderColor: '#FECACA',
+    borderRadius: 13,
+    backgroundColor: '#FFF7F7',
   },
   rejectionReasonLabel: {
-    fontSize: 10,
-    fontWeight: '800',
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '900',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
-    color: colors.error,
+    color: '#D92D20',
   },
   rejectionReasonText: {
     marginTop: 4,
-    fontSize: 12,
-    lineHeight: 18,
-    color: colors.errorText,
+    fontSize: 11,
+    lineHeight: 17,
+    color: '#991B1B',
   },
 
   problemCard: {
-    borderColor: '#fecaca',
+    borderColor: '#FECACA',
   },
   problemCardText: {
-    fontSize: 13,
-    lineHeight: 19,
-    color: colors.textSecondary,
+    fontSize: 11,
+    lineHeight: 17,
+    color: '#657791',
   },
 
   notesContainer: {
     padding: 13,
-    borderRadius: 12,
-    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: '#E6EDF7',
+    borderRadius: 13,
+    backgroundColor: '#F8FBFF',
   },
   notesText: {
-    fontSize: 13,
-    lineHeight: 20,
-    color: colors.textPrimary,
-  },
-
-  futureFeatureRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 11,
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: colors.surface,
-  },
-  futureFeatureIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#eef2ff',
-  },
-  futureFeatureTextContainer: {
-    flex: 1,
-  },
-  futureFeatureTitle: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: colors.textPrimary,
-  },
-  futureFeatureText: {
-    marginTop: 3,
     fontSize: 11,
-    lineHeight: 17,
-    color: colors.textSecondary,
+    lineHeight: 18,
+    color: '#0B1F4D',
   },
 
   actionsCard: {
     gap: 10,
-    padding: 16,
-    borderRadius: 18,
+    padding: 15,
     borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    backgroundColor: colors.surfaceLowest,
+    borderColor: '#DCE8F7',
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+  },
+  actionsHeading: {
+    marginBottom: 2,
   },
   actionsTitle: {
-    marginBottom: 2,
-    fontSize: 13,
-    fontWeight: '800',
-    color: colors.textPrimary,
+    marginTop: 2,
+    fontSize: 15,
+    lineHeight: 19,
+    fontWeight: '900',
+    color: '#0B1F4D',
   },
   primaryAction: {
     minHeight: 48,
@@ -2006,14 +2310,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 9,
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 13,
-    backgroundColor: colors.primary,
+    borderRadius: 14,
+    backgroundColor: '#073BDF',
+
+    shadowColor: '#073BDF',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.16,
+    shadowRadius: 8,
+    elevation: 3,
   },
   primaryActionText: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: colors.white,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '900',
+    color: '#FFFFFF',
   },
   cancelAction: {
     minHeight: 48,
@@ -2022,21 +2335,1590 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 9,
     paddingHorizontal: 16,
-    paddingVertical: 12,
     borderWidth: 1,
-    borderColor: '#fecaca',
-    borderRadius: 13,
-    backgroundColor: colors.errorBg,
+    borderColor: '#FECACA',
+    borderRadius: 14,
+    backgroundColor: '#FEF2F2',
   },
   cancelActionText: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: colors.error,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '900',
+    color: '#D92D20',
   },
   buttonPressed: {
-    opacity: 0.82,
+    opacity: 0.80,
   },
   buttonDisabled: {
-    opacity: 0.6,
+    opacity: 0.60,
   },
+
+  mockupSafeArea: {
+    flex: 1,
+    backgroundColor: '#00236F',
+  },
+  mockupScreen: {
+    flex: 1,
+    backgroundColor: '#F7FAFF',
+  },
+  mockupContent: {
+    paddingBottom: 42,
+    backgroundColor: '#F7FAFF',
+  },
+  mockupHeader: {
+    overflow: 'hidden',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 28,
+  },
+  mockupHeaderGlowLarge: {
+    position: 'absolute',
+    top: -110,
+    right: -80,
+    width: 280,
+    height: 280,
+    borderRadius: 140,
+    backgroundColor: 'rgba(255,255,255,0.10)',
+  },
+  mockupHeaderGlowSmall: {
+    position: 'absolute',
+    bottom: -105,
+    left: 190,
+    width: 220,
+    height: 220,
+    borderRadius: 110,
+    backgroundColor: 'rgba(255,255,255,0.07)',
+  },
+  mockupNavRow: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  mockupNavButton: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  mockupNavTitle: {
+    flex: 1,
+    fontSize: 16,
+    lineHeight: 20,
+    fontWeight: '900',
+    textAlign: 'center',
+    color: '#FFFFFF',
+  },
+  mockupNavShield: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  mockupOrderHeaderRow: {
+    marginTop: 19,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  mockupOrderHeaderCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  mockupOrderNumber: {
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '900',
+    letterSpacing: -0.45,
+    color: '#FFFFFF',
+  },
+  mockupOrderDate: {
+    marginTop: 5,
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '600',
+    color: '#EAF9FF',
+  },
+  mockupHeaderStatusBadge: {
+    maxWidth: 135,
+    minHeight: 34,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+  },
+  mockupHeaderStatusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  mockupHeaderStatusText: {
+    flexShrink: 1,
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+
+  mockupBody: {
+    gap: 15,
+    marginTop: -4,
+    paddingHorizontal: 14,
+    paddingTop: 14,
+  },
+  mockupStatusCard: {
+    paddingHorizontal: 15,
+    paddingTop: 16,
+    paddingBottom: 14,
+    borderWidth: 1,
+    borderColor: '#D7E6F8',
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+
+    shadowColor: '#12366F',
+    shadowOffset: {
+      width: 0,
+      height: 6,
+    },
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
+    elevation: 3,
+  },
+  mockupProblemStatusCard: {
+    borderColor: '#FECACA',
+  },
+  mockupDeliveredStatusCard: {
+    borderColor: '#BBF7D0',
+  },
+  mockupStatusTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  mockupStatusIcon: {
+    width: 58,
+    height: 58,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 19,
+    backgroundColor: '#EEF5FF',
+  },
+  mockupProblemStatusIcon: {
+    backgroundColor: '#FFF0F0',
+  },
+  mockupDeliveredStatusIcon: {
+    backgroundColor: '#EAF8F1',
+  },
+  mockupStatusCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  mockupStatusLabel: {
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '800',
+    color: '#8491A8',
+  },
+  mockupStatusTitle: {
+    marginTop: 2,
+    fontSize: 20,
+    lineHeight: 25,
+    fontWeight: '900',
+    letterSpacing: -0.3,
+    color: '#0B1F4D',
+  },
+  mockupStatusDescription: {
+    marginTop: 4,
+    fontSize: 11,
+    lineHeight: 17,
+    fontWeight: '600',
+    color: '#657791',
+  },
+  mockupLiveFacts: {
+    marginTop: 9,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 7,
+  },
+  mockupLiveFact: {
+    minHeight: 27,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    borderRadius: 9,
+    backgroundColor: '#EEF5FF',
+  },
+  mockupLiveFactText: {
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '900',
+    color: '#073BDF',
+  },
+  mockupProgressBlock: {
+    marginTop: 18,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#E6EDF7',
+  },
+
+  mockupSection: {
+    gap: 10,
+  },
+  mockupSectionHeadingRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  mockupSectionLabel: {
+    flex: 1,
+    minWidth: 0,
+  },
+  mockupSectionEyebrow: {
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '900',
+    letterSpacing: 1.05,
+    color: '#087DFF',
+  },
+  mockupSectionTitle: {
+    marginTop: 2,
+    fontSize: 18,
+    lineHeight: 23,
+    fontWeight: '900',
+    letterSpacing: -0.3,
+    color: '#0B1F4D',
+  },
+  mockupSectionSubtitle: {
+    marginTop: 3,
+    maxWidth: 330,
+    fontSize: 10,
+    lineHeight: 15,
+    fontWeight: '600',
+    color: '#657791',
+  },
+  mockupLiveBadge: {
+    minHeight: 28,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 9,
+    borderRadius: 10,
+    backgroundColor: '#EAF8F1',
+  },
+  mockupLiveBadgeDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#12B981',
+  },
+  mockupLiveBadgeText: {
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '900',
+    color: '#087A55',
+  },
+  mockupLiveCardFrame: {
+    overflow: 'hidden',
+    gap: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#D8E8FF',
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+
+    shadowColor: '#12366F',
+    shadowOffset: {
+      width: 0,
+      height: 5,
+    },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    elevation: 2,
+  },
+
+  mockupCourierCard: {
+    minHeight: 94,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    paddingHorizontal: 13,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#DDE8F5',
+    borderRadius: 19,
+    backgroundColor: '#FFFFFF',
+
+    shadowColor: '#12366F',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 2,
+  },
+  mockupCourierAvatar: {
+    width: 56,
+    height: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 18,
+    backgroundColor: '#EEF5FF',
+  },
+  mockupCourierCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  mockupCourierLabel: {
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '700',
+    color: '#8491A8',
+  },
+  mockupCourierName: {
+    marginTop: 2,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '900',
+    color: '#0B1F4D',
+  },
+  mockupCourierVerifiedRow: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  mockupCourierVerifiedText: {
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '700',
+    color: '#657791',
+  },
+  mockupCourierChatButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 15,
+    backgroundColor: '#EEF5FF',
+  },
+  mockupPinFrame: {
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#CDEEE4',
+    borderRadius: 20,
+    backgroundColor: '#F4FCF8',
+  },
+  mockupChatAction: {
+    minHeight: 76,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    borderWidth: 1,
+    borderColor: '#D8E8FF',
+    borderRadius: 18,
+    backgroundColor: '#F8FBFF',
+  },
+  mockupChatActionIcon: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: '#EEF5FF',
+  },
+  mockupChatActionCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  mockupChatActionTitle: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '900',
+    color: '#073BDF',
+  },
+  mockupChatActionText: {
+    marginTop: 2,
+    fontSize: 9,
+    lineHeight: 13,
+    fontWeight: '600',
+    color: '#657791',
+  },
+
+  mockupItemsCard: {
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#DDE8F5',
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+
+    shadowColor: '#12366F',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.055,
+    shadowRadius: 10,
+    elevation: 2,
+  },
+  mockupItemRow: {
+    minHeight: 88,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    paddingHorizontal: 13,
+    paddingVertical: 12,
+  },
+  mockupItemRowBorder: {
+    borderTopWidth: 1,
+    borderTopColor: '#E7EEF7',
+  },
+  mockupItemIcon: {
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 15,
+    backgroundColor: '#EEF5FF',
+  },
+  mockupItemInformation: {
+    flex: 1,
+    minWidth: 0,
+  },
+  mockupItemName: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '900',
+    color: '#0B1F4D',
+  },
+  mockupItemCalculation: {
+    marginTop: 3,
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '600',
+    color: '#657791',
+  },
+  mockupItemTotal: {
+    maxWidth: 110,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '900',
+    textAlign: 'right',
+    color: '#0B1F4D',
+  },
+  mockupPriceDivider: {
+    height: 1,
+    marginHorizontal: 13,
+    backgroundColor: '#E7EEF7',
+  },
+  mockupPriceSummary: {
+    gap: 9,
+    paddingHorizontal: 13,
+    paddingTop: 13,
+    paddingBottom: 14,
+    backgroundColor: '#FAFCFF',
+  },
+  mockupTotalRow: {
+    marginTop: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 11,
+    borderTopWidth: 1,
+    borderTopColor: '#DDE8F5',
+  },
+  mockupTotalLabel: {
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '900',
+    color: '#0B1F4D',
+  },
+  mockupTotalValue: {
+    fontSize: 18,
+    lineHeight: 22,
+    fontWeight: '900',
+    letterSpacing: -0.3,
+    color: '#073BDF',
+  },
+
+  mockupInfoCard: {
+    borderRadius: 20,
+    borderColor: '#DDE8F5',
+    backgroundColor: '#FFFFFF',
+
+    shadowColor: '#12366F',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.045,
+    shadowRadius: 9,
+    elevation: 1,
+  },
+  mockupActionsCard: {
+    gap: 10,
+    padding: 15,
+    borderWidth: 1,
+    borderColor: '#DDE8F5',
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+  },
+  mockupPrimaryAction: {
+    backgroundColor: '#073BDF',
+  },
+
+  literalSafeArea: {
+    flex: 1,
+    backgroundColor: '#00236F',
+  },
+  literalScreen: {
+    flex: 1,
+    backgroundColor: '#F7FAFF',
+  },
+  literalContent: {
+    paddingBottom: 42,
+    backgroundColor: '#F7FAFF',
+  },
+  literalHeader: {
+    position: 'relative',
+    overflow: 'hidden',
+    paddingHorizontal: 18,
+    paddingTop: 10,
+    paddingBottom: 30,
+  },
+  literalHeaderOrbLarge: {
+    position: 'absolute',
+    right: -72,
+    bottom: -110,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: 'rgba(255,255,255,0.11)',
+  },
+  literalHeaderOrbSmall: {
+    position: 'absolute',
+    top: 38,
+    right: 125,
+    width: 112,
+    height: 112,
+    borderRadius: 56,
+    backgroundColor: 'rgba(255,255,255,0.065)',
+  },
+  literalNavRow: {
+    minHeight: 50,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  literalNavButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 15,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+  },
+  literalNavTitle: {
+    flex: 1,
+    marginHorizontal: 12,
+    fontSize: 16,
+    lineHeight: 20,
+    fontWeight: '900',
+    textAlign: 'center',
+    color: '#FFFFFF',
+  },
+  literalHeaderOrderRow: {
+    marginTop: 15,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  literalHeaderOrderCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  literalHeaderOrderTitle: {
+    fontSize: 24,
+    lineHeight: 29,
+    fontWeight: '900',
+    letterSpacing: -0.55,
+    color: '#FFFFFF',
+  },
+  literalHeaderOrderDate: {
+    marginTop: 5,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '600',
+    color: '#E8F8FF',
+  },
+  literalHeaderBadge: {
+    maxWidth: 134,
+    minHeight: 38,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 11,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.72)',
+    borderRadius: 12,
+  },
+  literalHeaderBadgeDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  literalHeaderBadgeText: {
+    flexShrink: 1,
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '900',
+  },
+
+  literalBody: {
+    marginTop: -18,
+    gap: 14,
+    paddingHorizontal: 12,
+  },
+  literalStatusCard: {
+    paddingHorizontal: 16,
+    paddingTop: 17,
+    paddingBottom: 15,
+    borderWidth: 1,
+    borderColor: '#D8E5F5',
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+
+    shadowColor: '#0B3474',
+    shadowOffset: {
+      width: 0,
+      height: 6,
+    },
+    shadowOpacity: 0.10,
+    shadowRadius: 14,
+    elevation: 4,
+  },
+  literalProblemCard: {
+    borderColor: '#FECACA',
+  },
+  literalDeliveredCard: {
+    borderColor: '#BBF7D0',
+  },
+  literalStatusHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 13,
+  },
+  literalStatusIcon: {
+    width: 58,
+    height: 58,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#D7E7FF',
+    borderRadius: 20,
+    backgroundColor: '#EEF5FF',
+  },
+  literalStatusIconProblem: {
+    borderColor: '#FECACA',
+    backgroundColor: '#FFF2F2',
+  },
+  literalStatusIconDelivered: {
+    borderColor: '#BBF7D0',
+    backgroundColor: '#F0FDF4',
+  },
+  literalStatusCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  literalStatusKicker: {
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: '700',
+    color: '#71809A',
+  },
+  literalStatusTitle: {
+    marginTop: 2,
+    fontSize: 21,
+    lineHeight: 26,
+    fontWeight: '900',
+    letterSpacing: -0.3,
+    color: '#0B1F4D',
+  },
+  literalStatusDescription: {
+    marginTop: 4,
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '600',
+    color: '#526684',
+  },
+  literalEtaRow: {
+    marginTop: 9,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  literalEtaFact: {
+    minHeight: 29,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 9,
+    borderRadius: 10,
+    backgroundColor: '#EEF5FF',
+  },
+  literalEtaFactText: {
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: '900',
+    color: '#073BDF',
+  },
+  literalDivider: {
+    height: 1,
+    marginTop: 14,
+    backgroundColor: '#E5ECF5',
+  },
+
+  literalProgress: {
+    marginTop: 15,
+    flexDirection: 'row',
+  },
+  literalProgressStep: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  literalProgressRail: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  literalProgressLine: {
+    flex: 1,
+    height: 3,
+    backgroundColor: '#DCE5F1',
+  },
+  literalProgressLineActive: {
+    backgroundColor: '#0B5CFF',
+  },
+  literalProgressSpacer: {
+    flex: 1,
+    height: 3,
+    backgroundColor: 'transparent',
+  },
+  literalProgressDot: {
+    width: 27,
+    height: 27,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2.5,
+    borderColor: '#D7E1ED',
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+  },
+  literalProgressDotActive: {
+    borderColor: '#0B5CFF',
+    backgroundColor: '#0B5CFF',
+  },
+  literalProgressDotCurrent: {
+    borderColor: '#0B5CFF',
+    backgroundColor: '#FFFFFF',
+  },
+  literalProgressCenter: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: '#10D1D0',
+  },
+  literalProgressLabel: {
+    minHeight: 24,
+    marginTop: 7,
+    paddingHorizontal: 2,
+    fontSize: 7.5,
+    lineHeight: 10,
+    fontWeight: '700',
+    textAlign: 'center',
+    color: '#7B899E',
+  },
+  literalProgressLabelCurrent: {
+    fontWeight: '900',
+    color: '#073BDF',
+  },
+
+  literalPreDelivery: {
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 11,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#BCECF4',
+    borderRadius: 15,
+    backgroundColor: '#ECFCFF',
+  },
+  literalPreDeliveryIcon: {
+    width: 38,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+  },
+  literalPreDeliveryCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  literalPreDeliveryTitle: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '900',
+    color: '#073BDF',
+  },
+  literalPreDeliveryText: {
+    marginTop: 2,
+    fontSize: 9,
+    lineHeight: 13,
+    fontWeight: '600',
+    color: '#657791',
+  },
+
+  literalSectionBlock: {
+    gap: 10,
+  },
+  literalSectionTitle: {
+    fontSize: 18,
+    lineHeight: 23,
+    fontWeight: '900',
+    letterSpacing: -0.25,
+    color: '#0B1F4D',
+  },
+  literalSectionSubtitle: {
+    marginTop: 2,
+    maxWidth: 320,
+    fontSize: 10,
+    lineHeight: 15,
+    fontWeight: '600',
+    color: '#657791',
+  },
+  literalPanelHeadingRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  literalPanelTitle: {
+    fontSize: 15,
+    lineHeight: 19,
+    fontWeight: '900',
+    color: '#0B1F4D',
+  },
+  literalPanelSubtitle: {
+    marginTop: 2,
+    maxWidth: 260,
+    fontSize: 9,
+    lineHeight: 13,
+    fontWeight: '600',
+    color: '#657791',
+  },
+  literalLivePill: {
+    minHeight: 27,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    borderRadius: 9,
+    backgroundColor: '#EAFBF4',
+  },
+  literalLiveDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#12B981',
+  },
+  literalLiveText: {
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '900',
+    color: '#087A55',
+  },
+  literalDeliveryPanel: {
+    gap: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#D8E5F5',
+    borderRadius: 19,
+    backgroundColor: '#FFFFFF',
+
+    shadowColor: '#0B3474',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.055,
+    shadowRadius: 10,
+    elevation: 2,
+  },
+
+  literalCourierCard: {
+    minHeight: 96,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#DDE8F5',
+    borderRadius: 18,
+    backgroundColor: '#FFFFFF',
+  },
+  literalCourierAvatar: {
+    width: 54,
+    height: 54,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 18,
+    backgroundColor: '#EEF5FF',
+  },
+  literalCourierCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  literalCourierLabel: {
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '700',
+    color: '#71809A',
+  },
+  literalCourierName: {
+    marginTop: 2,
+    fontSize: 15,
+    lineHeight: 19,
+    fontWeight: '900',
+    color: '#0B1F4D',
+  },
+  literalVerifiedRow: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  literalVerifiedText: {
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '700',
+    color: '#087DFF',
+  },
+  literalRoundAction: {
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 16,
+    backgroundColor: '#EEF5FF',
+  },
+  literalPinFrame: {
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#CDEFE2',
+    borderRadius: 18,
+    backgroundColor: '#F0FBF6',
+  },
+  literalChatTile: {
+    minHeight: 72,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 11,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#CFE0FF',
+    borderRadius: 16,
+    backgroundColor: '#F7FAFF',
+  },
+  literalChatTileIcon: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 13,
+    backgroundColor: '#EEF5FF',
+  },
+  literalChatTileCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  literalChatTileTitle: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '900',
+    color: '#073BDF',
+  },
+  literalChatTileText: {
+    marginTop: 2,
+    fontSize: 9,
+    lineHeight: 13,
+    fontWeight: '600',
+    color: '#657791',
+  },
+
+  literalItemsPanel: {
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#DCE8F5',
+    borderRadius: 19,
+    backgroundColor: '#FFFFFF',
+
+    shadowColor: '#0B3474',
+    shadowOffset: {
+      width: 0,
+      height: 3,
+    },
+    shadowOpacity: 0.045,
+    shadowRadius: 8,
+    elevation: 1,
+  },
+  literalItemRow: {
+    minHeight: 76,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 13,
+    paddingVertical: 11,
+  },
+  literalItemRowBorder: {
+    borderTopWidth: 1,
+    borderTopColor: '#E7EDF6',
+  },
+  literalItemIcon: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: '#EEF5FF',
+  },
+  literalItemCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  literalItemName: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '900',
+    color: '#0B1F4D',
+  },
+  literalItemMeta: {
+    marginTop: 3,
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '600',
+    color: '#657791',
+  },
+  literalItemTotal: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '900',
+    color: '#0B1F4D',
+  },
+  literalPriceBox: {
+    gap: 9,
+    paddingHorizontal: 13,
+    paddingTop: 12,
+    paddingBottom: 13,
+    borderTopWidth: 1,
+    borderTopColor: '#DCE8F5',
+    backgroundColor: '#F3F8FF',
+  },
+  literalPriceLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  literalPriceLineLabel: {
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '600',
+    color: '#657791',
+  },
+  literalPriceLineValue: {
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '800',
+    color: '#0B1F4D',
+  },
+  literalTotalRow: {
+    minHeight: 35,
+    marginTop: 2,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    paddingTop: 9,
+    borderTopWidth: 1,
+    borderTopColor: '#D3E0EF',
+  },
+  literalTotalLabel: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '900',
+    color: '#0B1F4D',
+  },
+  literalTotalValue: {
+    fontSize: 19,
+    lineHeight: 23,
+    fontWeight: '900',
+    letterSpacing: -0.3,
+    color: '#073BDF',
+  },
+
+  literalInfoPanel: {
+    gap: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#DCE8F5',
+    borderRadius: 19,
+    backgroundColor: '#FFFFFF',
+
+    shadowColor: '#0B3474',
+    shadowOffset: {
+      width: 0,
+      height: 3,
+    },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 1,
+  },
+  literalInfoHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  literalInfoHeaderIcon: {
+    width: 38,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#D8E8FF',
+    borderRadius: 12,
+    backgroundColor: '#EEF5FF',
+  },
+  literalInfoHeaderCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  literalInfoHeaderTitle: {
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '900',
+    color: '#0B1F4D',
+  },
+  literalInfoHeaderSubtitle: {
+    marginTop: 2,
+    fontSize: 9,
+    lineHeight: 13,
+    fontWeight: '600',
+    color: '#657791',
+  },
+  literalInformationRow: {
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    borderRadius: 14,
+    backgroundColor: '#F8FBFF',
+  },
+  literalInformationIcon: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 11,
+    backgroundColor: '#EEF5FF',
+  },
+  literalInformationCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  literalInformationLabel: {
+    fontSize: 8,
+    lineHeight: 11,
+    fontWeight: '900',
+    letterSpacing: 0.55,
+    textTransform: 'uppercase',
+    color: '#8491A8',
+  },
+  literalInformationValue: {
+    marginTop: 3,
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '800',
+    color: '#0B1F4D',
+  },
+
+  literalActionsPanel: {
+    gap: 10,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#DCE8F5',
+    borderRadius: 19,
+    backgroundColor: '#FFFFFF',
+  },
+  literalPrimaryAction: {
+    borderRadius: 14,
+    backgroundColor: '#073BDF',
+  },
+  literalCancelAction: {
+    minHeight: 46,
+    borderRadius: 14,
+    backgroundColor: '#FFF5F5',
+  },
+
+  exactSafeArea: {
+    flex: 1,
+    backgroundColor: '#00236F',
+  },
+  exactScreen: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  exactContent: {
+    paddingBottom: 38,
+    backgroundColor: '#FFFFFF',
+  },
+  exactHeader: {
+    position: 'relative',
+    overflow: 'hidden',
+    paddingHorizontal: 18,
+    paddingTop: 8,
+    paddingBottom: 32,
+  },
+  exactHeaderOrbLarge: {
+    position: 'absolute',
+    right: -78,
+    bottom: -118,
+    width: 275,
+    height: 275,
+    borderRadius: 138,
+    backgroundColor: 'rgba(255,255,255,0.105)',
+  },
+  exactHeaderOrbSmall: {
+    position: 'absolute',
+    top: 42,
+    right: 116,
+    width: 118,
+    height: 118,
+    borderRadius: 59,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  exactNavRow: {
+    minHeight: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  exactNavButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 15,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+  },
+  exactNavTitle: {
+    flex: 1,
+    marginHorizontal: 12,
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '900',
+    textAlign: 'center',
+    color: '#FFFFFF',
+  },
+  exactOrderRow: {
+    marginTop: 15,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  exactOrderCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  exactOrderTitle: {
+    fontSize: 24,
+    lineHeight: 29,
+    fontWeight: '900',
+    letterSpacing: -0.5,
+    color: '#FFFFFF',
+  },
+  exactOrderDate: {
+    marginTop: 5,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '600',
+    color: '#E8F8FF',
+  },
+  exactStatusBadge: {
+    maxWidth: 132,
+    minHeight: 38,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.72)',
+    borderRadius: 12,
+  },
+  exactStatusBadgeDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  exactStatusBadgeText: {
+    flexShrink: 1,
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '900',
+  },
+  exactSheet: {
+    marginTop: -16,
+    gap: 13,
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 4,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: '#FFFFFF',
+  },
+  exactStatusCard: {
+    paddingHorizontal: 15,
+    paddingTop: 16,
+    paddingBottom: 14,
+    borderWidth: 1,
+    borderColor: '#D8E5F5',
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+
+    shadowColor: '#0B3474',
+    shadowOffset: {
+      width: 0,
+      height: 5,
+    },
+    shadowOpacity: 0.09,
+    shadowRadius: 13,
+    elevation: 3,
+  },
+  exactProblemStatusCard: {
+    borderColor: '#FECACA',
+  },
+  exactStatusTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 13,
+  },
+  exactStatusIcon: {
+    width: 62,
+    height: 62,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#D7E7FF',
+    borderRadius: 21,
+    backgroundColor: '#EEF5FF',
+  },
+  exactProblemIcon: {
+    borderColor: '#FECACA',
+    backgroundColor: '#FFF2F2',
+  },
+  exactDeliveredIcon: {
+    borderColor: '#BBF7D0',
+    backgroundColor: '#F0FDF4',
+  },
+  exactStatusCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  exactStatusKicker: {
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: '700',
+    color: '#71809A',
+  },
+  exactStatusTitle: {
+    marginTop: 2,
+    fontSize: 21,
+    lineHeight: 26,
+    fontWeight: '900',
+    letterSpacing: -0.25,
+    color: '#0B1F4D',
+  },
+  exactStatusDescription: {
+    marginTop: 4,
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: '600',
+    color: '#526684',
+  },
+  exactLiveFacts: {
+    marginTop: 9,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 7,
+  },
+  exactLiveFact: {
+    minHeight: 29,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    borderRadius: 9,
+    backgroundColor: '#EEF5FF',
+  },
+  exactLiveFactText: {
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '900',
+    color: '#073BDF',
+  },
+  exactProgressDivider: {
+    height: 1,
+    marginTop: 14,
+    backgroundColor: '#E4ECF5',
+  },
+  exactSection: {
+    gap: 8,
+  },
+  exactSectionHeading: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+  },
+  exactSectionTitle: {
+    fontSize: 17,
+    lineHeight: 22,
+    fontWeight: '900',
+    letterSpacing: -0.25,
+    color: '#0B1F4D',
+  },
+  exactItemsCard: {
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#DCE8F5',
+    borderRadius: 18,
+    backgroundColor: '#FFFFFF',
+  },
+  exactItemRow: {
+    minHeight: 76,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  exactItemRowBorder: {
+    borderTopWidth: 1,
+    borderTopColor: '#E7EDF6',
+  },
+  exactItemIcon: {
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: '#EEF5FF',
+  },
+  exactItemCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  exactItemName: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '900',
+    color: '#0B1F4D',
+  },
+  exactItemMeta: {
+    marginTop: 3,
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '600',
+    color: '#657791',
+  },
+  exactItemTotal: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '900',
+    color: '#0B1F4D',
+  },
+  exactPriceSummary: {
+    gap: 9,
+    paddingHorizontal: 13,
+    paddingTop: 12,
+    paddingBottom: 13,
+    borderTopWidth: 1,
+    borderTopColor: '#DCE8F5',
+    backgroundColor: '#F1F7FF',
+  },
+  exactTotalRow: {
+    minHeight: 35,
+    marginTop: 2,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    paddingTop: 9,
+    borderTopWidth: 1,
+    borderTopColor: '#D3E0EF',
+  },
+  exactTotalLabel: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '900',
+    color: '#0B1F4D',
+  },
+  exactTotalValue: {
+    fontSize: 19,
+    lineHeight: 23,
+    fontWeight: '900',
+    letterSpacing: -0.3,
+    color: '#073BDF',
+  },
+  exactInfoCard: {
+    gap: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#DCE8F5',
+    borderRadius: 18,
+    backgroundColor: '#FFFFFF',
+  },
+  exactActionsCard: {
+    gap: 10,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#DCE8F5',
+    borderRadius: 18,
+    backgroundColor: '#FFFFFF',
+  },
+  exactPrimaryAction: {
+    borderRadius: 13,
+    backgroundColor: '#073BDF',
+  },
+  exactCancelAction: {
+    minHeight: 46,
+    borderRadius: 13,
+    backgroundColor: '#FFF5F5',
+  }
 })

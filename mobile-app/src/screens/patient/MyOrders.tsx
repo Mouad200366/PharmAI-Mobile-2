@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   FlatList,
@@ -12,7 +12,8 @@ import {
 import type { CompositeScreenProps } from '@react-navigation/native'
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
-import { useFocusEffect } from '@react-navigation/native'
+import { useFocusEffect, useIsFocused } from '@react-navigation/native'
+import { LinearGradient } from 'expo-linear-gradient'
 import type { AppTabParamList, MainStackParamList } from '../../navigation/types'
 import {
   isActiveOrder,
@@ -22,6 +23,11 @@ import {
   type Order,
   type OrderStatus,
 } from '../../api/orders'
+import {
+  createOrderTrackingSocket,
+  parseOrderTrackingEvent,
+} from '../../api/orderRealtime'
+import { tokenStorage } from '../../store/tokenStorage'
 import Icon from '../../components/ui/Icon'
 import { colors } from '../../theme/colors'
 
@@ -39,6 +45,7 @@ type FilterDefinition = {
 }
 
 const CANCELLED_STATUSES: OrderStatus[] = ['cancelled', 'rejected', 'failed']
+const ORDER_REALTIME_RECONNECT_MS = 3_000
 
 const FILTERS: FilterDefinition[] = [
   { key: 'all', label: 'Toutes', matches: () => true },
@@ -80,6 +87,7 @@ const STATUS_DESCRIPTIONS: Record<OrderStatus, string> = {
 }
 
 export default function MyOrders({ navigation }: Props) {
+  const isFocused = useIsFocused()
   const [orders, setOrders] = useState<Order[]>([])
   const [filter, setFilter] = useState<FilterKey>('all')
   const [loading, setLoading] = useState(true)
@@ -115,6 +123,144 @@ export default function MyOrders({ navigation }: Props) {
     }, [loadOrders]),
   )
 
+  const activeOrderKey = orders
+    .filter((order) => isActiveOrder(order.status))
+    .map((order) => order.id)
+    .sort((left, right) => left - right)
+    .join(',')
+
+  useEffect(() => {
+    if (!isFocused || !activeOrderKey) {
+      return
+    }
+
+    const orderIds = activeOrderKey
+      .split(',')
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value))
+
+    let active = true
+    const sockets = new Map<number, WebSocket>()
+    const reconnectTimers = new Map<
+      number,
+      ReturnType<typeof setTimeout>
+    >()
+
+    const clearReconnectTimer = (orderId: number) => {
+      const timer = reconnectTimers.get(orderId)
+
+      if (timer) {
+        clearTimeout(timer)
+        reconnectTimers.delete(orderId)
+      }
+    }
+
+    const scheduleReconnect = (
+      orderId: number,
+      connectOrder: (id: number) => Promise<void>,
+    ) => {
+      if (!active || reconnectTimers.has(orderId)) {
+        return
+      }
+
+      const timer = setTimeout(() => {
+        reconnectTimers.delete(orderId)
+        void connectOrder(orderId)
+      }, ORDER_REALTIME_RECONNECT_MS)
+
+      reconnectTimers.set(orderId, timer)
+    }
+
+    const connectOrder = async (orderId: number) => {
+      const accessToken = await tokenStorage.getAccessToken()
+
+      if (!active || !accessToken) {
+        return
+      }
+
+      clearReconnectTimer(orderId)
+
+      try {
+        const socket = createOrderTrackingSocket(
+          orderId,
+          accessToken,
+        )
+
+        sockets.set(orderId, socket)
+
+        socket.onmessage = (event) => {
+          if (!active) {
+            return
+          }
+
+          const realtimeEvent =
+            parseOrderTrackingEvent(event.data)
+
+          if (
+            !realtimeEvent
+            || realtimeEvent.type !== 'status_change'
+            || realtimeEvent.order_id !== orderId
+          ) {
+            return
+          }
+
+          // Update the visible list immediately so filters, badges and the
+          // featured active order react without a manual refresh.
+          setOrders((currentOrders) =>
+            currentOrders.map((order) =>
+              order.id === orderId
+                ? {
+                    ...order,
+                    status: realtimeEvent.status,
+                  }
+                : order,
+            ),
+          )
+
+          // REST remains authoritative for timestamps, history and any other
+          // fields that may have changed with the same transition.
+          void loadOrders()
+        }
+
+        socket.onerror = () => {
+          // onclose owns reconnect scheduling. REST refresh still works.
+        }
+
+        socket.onclose = () => {
+          if (sockets.get(orderId) === socket) {
+            sockets.delete(orderId)
+          }
+
+          scheduleReconnect(orderId, connectOrder)
+        }
+      } catch {
+        scheduleReconnect(orderId, connectOrder)
+      }
+    }
+
+    orderIds.forEach((orderId) => {
+      void connectOrder(orderId)
+    })
+
+    return () => {
+      active = false
+
+      reconnectTimers.forEach((timer) => {
+        clearTimeout(timer)
+      })
+      reconnectTimers.clear()
+
+      sockets.forEach((socket) => {
+        socket.close()
+      })
+      sockets.clear()
+    }
+  }, [
+    activeOrderKey,
+    isFocused,
+    loadOrders,
+  ])
+
   const handleRefresh = useCallback(async () => {
     setRefreshing(true)
     await loadOrders()
@@ -146,6 +292,9 @@ export default function MyOrders({ navigation }: Props) {
     cancelled: orders.filter((order) => CANCELLED_STATUSES.includes(order.status)).length,
   }
 
+  const heroActiveOrder =
+    orders.find((order) => isActiveOrder(order.status)) ?? null
+
   const openOrder = useCallback(
     (orderId: number) => navigation.navigate('OrderDetail', { id: orderId }),
     [navigation],
@@ -170,40 +319,112 @@ export default function MyOrders({ navigation }: Props) {
         <RefreshControl
           refreshing={refreshing}
           onRefresh={handleRefresh}
-          tintColor={colors.primary}
-          colors={[colors.primary]}
+          tintColor="#073BDF"
+          colors={['#073BDF']}
         />
       }
       ListHeaderComponent={
         <View style={styles.headerContent}>
-          <View>
-            <Text style={styles.title}>Mes commandes</Text>
-            <Text style={styles.subtitle}>
-              Suivez vos médicaments de la pharmacie jusqu'à votre porte.
-            </Text>
-          </View>
+          <LinearGradient
+            colors={['#073BDF', '#087DFF', '#10D1D0']}
+            start={{ x: 0, y: 0.1 }}
+            end={{ x: 1, y: 0.9 }}
+            style={styles.hero}
+          >
+            <View style={styles.heroGlowOne} />
+            <View style={styles.heroGlowTwo} />
+
+            <View style={styles.heroTopRow}>
+              <View style={styles.heroCopy}>
+                <Text style={styles.heroEyebrow}>SUIVI DES COMMANDES</Text>
+                <Text style={styles.heroTitle}>Mes commandes</Text>
+                <Text style={styles.heroSubtitle}>
+                  Retrouvez vos commandes en cours et votre historique en un coup d'œil.
+                </Text>
+              </View>
+
+              <View style={styles.heroBag}>
+                <Icon name="shopping_bag" size={31} color="#073BDF" />
+                <View style={styles.heroBagSpark}>
+                  <Text style={styles.heroBagSparkText}>AI</Text>
+                </View>
+              </View>
+            </View>
+
+            {heroActiveOrder ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Ouvrir la commande active numéro ${heroActiveOrder.id}`}
+                style={({ pressed }) => [
+                  styles.heroActiveBanner,
+                  pressed && styles.buttonPressed,
+                ]}
+                onPress={() => openOrder(heroActiveOrder.id)}
+              >
+                <View style={styles.heroActiveIcon}>
+                  <Icon
+                    name={getStatusIcon(heroActiveOrder.status)}
+                    size={22}
+                    color="#073BDF"
+                  />
+                </View>
+
+                <View style={styles.heroActiveContent}>
+                  <Text style={styles.heroActiveTitle}>
+                    {filterCounts.active} commande
+                    {filterCounts.active !== 1 ? 's' : ''} active
+                    {filterCounts.active !== 1 ? 's' : ''}
+                  </Text>
+                  <Text style={styles.heroActiveText} numberOfLines={1}>
+                    {STATUS_DESCRIPTIONS[heroActiveOrder.status]}
+                  </Text>
+                </View>
+
+                <Icon name="chevron_right" size={25} color="#073BDF" />
+              </Pressable>
+            ) : (
+              <View style={styles.heroActiveBanner}>
+                <View style={styles.heroActiveIcon}>
+                  <Icon name="task_alt" size={22} color="#073BDF" />
+                </View>
+                <View style={styles.heroActiveContent}>
+                  <Text style={styles.heroActiveTitle}>Aucune commande active</Text>
+                  <Text style={styles.heroActiveText}>
+                    Votre historique reste disponible ci-dessous.
+                  </Text>
+                </View>
+              </View>
+            )}
+          </LinearGradient>
 
           <View style={styles.statsRow}>
             <StatCard
               icon="receipt_long"
               value={filterCounts.all}
               label="Total"
-              iconColor={colors.primary}
-              iconBackground="#eef2ff"
+              iconColor="#073BDF"
+              iconBackground="#EEF5FF"
             />
             <StatCard
               icon="schedule"
               value={filterCounts.active}
               label="En cours"
-              iconColor="#d97706"
-              iconBackground="#fff7ed"
+              iconColor="#087DFF"
+              iconBackground="#EAF4FF"
             />
             <StatCard
               icon="check_circle"
               value={filterCounts.delivered}
               label="Livrées"
-              iconColor={colors.success}
-              iconBackground={colors.successBg}
+              iconColor="#10AFAE"
+              iconBackground="#EAFBFA"
+            />
+            <StatCard
+              icon="cancel"
+              value={filterCounts.cancelled}
+              label="Annulées"
+              iconColor="#D92D20"
+              iconBackground="#FFF0F0"
             />
           </View>
 
@@ -216,27 +437,57 @@ export default function MyOrders({ navigation }: Props) {
           />
 
           {latestActiveOrder ? (
-            <FeaturedActiveOrder order={latestActiveOrder} onPress={() => openOrder(latestActiveOrder.id)} />
+            <View style={styles.featuredSection}>
+              <View style={styles.sectionHeading}>
+                <View>
+                  <Text style={styles.sectionEyebrow}>EN COURS</Text>
+                  <Text style={styles.sectionTitle}>Commande active</Text>
+                </View>
+
+                <View style={styles.livePill}>
+                  <View style={styles.liveDot} />
+                  <Text style={styles.liveText}>Suivi actif</Text>
+                </View>
+              </View>
+
+              <FeaturedActiveOrder
+                order={latestActiveOrder}
+                onPress={() => openOrder(latestActiveOrder.id)}
+              />
+            </View>
           ) : null}
 
           {displayedOrders.length > 0 ? (
-            <View style={styles.sectionHeadingRow}>
+            <View style={styles.historyHeading}>
               <View>
+                <Text style={styles.sectionEyebrow}>
+                  {filter === 'all' ? 'HISTORIQUE' : 'COMMANDES'}
+                </Text>
                 <Text style={styles.sectionTitle}>{getSectionTitle(filter)}</Text>
-                <Text style={styles.sectionCount}>
-                  {displayedOrders.length} commande
-                  {displayedOrders.length !== 1 ? 's' : ''}
+              </View>
+
+              <View style={styles.historyCountPill}>
+                <Text style={styles.historyCountText}>
+                  {displayedOrders.length}
                 </Text>
               </View>
             </View>
           ) : null}
         </View>
       }
-      renderItem={({ item }) => <OrderCard order={item} onPress={() => openOrder(item.id)} />}
+      renderItem={({ item }) => (
+        <OrderCard
+          order={item}
+          onPress={() => openOrder(item.id)}
+        />
+      )}
       ItemSeparatorComponent={() => <View style={styles.itemSeparator} />}
       ListEmptyComponent={
         latestActiveOrder ? null : (
-          <OrdersEmptyState filter={filter} onRefresh={handleRefresh} />
+          <OrdersEmptyState
+            filter={filter}
+            onRefresh={handleRefresh}
+          />
         )
       }
     />
@@ -313,8 +564,8 @@ function StatCard({
       <View style={[styles.statIcon, { backgroundColor: iconBackground }]}>
         <Icon name={icon} size={18} color={iconColor} />
       </View>
-      <Text style={styles.statValue}>{value}</Text>
       <Text style={styles.statLabel}>{label}</Text>
+      <Text style={styles.statValue}>{value}</Text>
     </View>
   )
 }
@@ -349,11 +600,27 @@ function FilterTabs({
             ]}
             onPress={() => onSelect(item.key)}
           >
-            <Text style={[styles.filterLabel, selected && styles.filterLabelSelected]}>
+            <Text
+              style={[
+                styles.filterLabel,
+                selected && styles.filterLabelSelected,
+              ]}
+            >
               {item.label}
             </Text>
-            <View style={[styles.filterCount, selected && styles.filterCountSelected]}>
-              <Text style={[styles.filterCountText, selected && styles.filterCountTextSelected]}>
+
+            <View
+              style={[
+                styles.filterCount,
+                selected && styles.filterCountSelected,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.filterCountText,
+                  selected && styles.filterCountTextSelected,
+                ]}
+              >
                 {counts[item.key]}
               </Text>
             </View>
@@ -364,152 +631,260 @@ function FilterTabs({
   )
 }
 
-function FeaturedActiveOrder({ order, onPress }: { order: Order; onPress: () => void }) {
+function FeaturedActiveOrder({
+  order,
+  onPress,
+}: {
+  order: Order
+  onPress: () => void
+}) {
   const statusColors = STATUS_COLOR[order.status]
   const currentStage = ACTIVE_STAGE_BY_STATUS[order.status] ?? 0
   const articleCount = getArticleCount(order)
 
   return (
     <View style={styles.featuredCard}>
-      <View style={styles.featuredAccent} />
-
       <View style={styles.featuredHeader}>
-        <View style={styles.featuredTitleRow}>
+        <View style={styles.featuredIdentity}>
           <View style={styles.featuredIcon}>
-            <Icon name={getStatusIcon(order.status)} size={24} color={colors.primary} />
+            <Icon
+              name={getStatusIcon(order.status)}
+              size={25}
+              color="#073BDF"
+            />
           </View>
+
           <View style={styles.flexContent}>
-            <Text style={styles.featuredEyebrow}>COMMANDE ACTIVE</Text>
-            <Text style={styles.featuredOrderId}>Commande #{order.id}</Text>
+            <Text style={styles.featuredOrderId}>
+              Commande #{order.id}
+            </Text>
+            <Text
+              style={styles.featuredMedicineSummary}
+              numberOfLines={1}
+            >
+              {getMedicineSummary(order)}
+            </Text>
           </View>
         </View>
 
-        <View style={[styles.statusBadge, { backgroundColor: statusColors.bg }]}>
-          <Text style={[styles.statusBadgeText, { color: statusColors.text }]}>
+        <View
+          style={[
+            styles.statusBadge,
+            { backgroundColor: statusColors.bg },
+          ]}
+        >
+          <Text
+            style={[
+              styles.statusBadgeText,
+              { color: statusColors.text },
+            ]}
+          >
             {STATUS_LABELS[order.status]}
           </Text>
         </View>
       </View>
 
-      <Text style={styles.featuredDescription}>{STATUS_DESCRIPTIONS[order.status]}</Text>
+      <Text style={styles.featuredDescription}>
+        {STATUS_DESCRIPTIONS[order.status]}
+      </Text>
 
-      <View style={styles.progressHeader}>
-        <Text style={styles.progressTitle}>{ACTIVE_STAGES[currentStage]}</Text>
-        <Text style={styles.progressStep}>Étape {currentStage + 1} sur {ACTIVE_STAGES.length}</Text>
+      <View style={styles.progressRow}>
+        {ACTIVE_STAGES.map((stage, index) => {
+          const completed = index < currentStage
+          const current = index === currentStage
+
+          return (
+            <View key={stage} style={styles.progressStage}>
+              <View style={styles.progressTrackRow}>
+                {index > 0 ? (
+                  <View
+                    style={[
+                      styles.progressConnector,
+                      index <= currentStage &&
+                        styles.progressConnectorActive,
+                    ]}
+                  />
+                ) : (
+                  <View style={styles.progressConnectorSpacer} />
+                )}
+
+                <View
+                  style={[
+                    styles.progressDot,
+                    completed && styles.progressDotCompleted,
+                    current && styles.progressDotCurrent,
+                  ]}
+                >
+                  {completed ? (
+                    <Icon name="check" size={12} color="#FFFFFF" />
+                  ) : current ? (
+                    <View style={styles.progressCurrentCenter} />
+                  ) : null}
+                </View>
+
+                {index < ACTIVE_STAGES.length - 1 ? (
+                  <View
+                    style={[
+                      styles.progressConnector,
+                      index < currentStage &&
+                        styles.progressConnectorActive,
+                    ]}
+                  />
+                ) : (
+                  <View style={styles.progressConnectorSpacer} />
+                )}
+              </View>
+
+              <Text
+                style={[
+                  styles.progressStageLabel,
+                  current && styles.progressStageLabelCurrent,
+                ]}
+                numberOfLines={1}
+              >
+                {stage}
+              </Text>
+            </View>
+          )
+        })}
       </View>
 
-      <View style={styles.progressSegments}>
-        {ACTIVE_STAGES.map((stage, index) => (
-          <View
-            key={stage}
-            style={[
-              styles.progressSegment,
-              index <= currentStage && styles.progressSegmentCompleted,
-            ]}
-          />
-        ))}
-      </View>
+      <View style={styles.featuredMetrics}>
+        <View style={styles.featuredMetric}>
+          <Text style={styles.metricLabel}>Articles</Text>
+          <Text style={styles.metricValue}>{articleCount}</Text>
+        </View>
 
-      <View style={styles.featuredDetails}>
-        <View style={styles.featuredDetailItem}>
-          <Icon name="medication" size={18} color={colors.textSecondary} />
-          <Text style={styles.featuredDetailText} numberOfLines={1}>
-            {getMedicineSummary(order)}
+        <View style={styles.metricDivider} />
+
+        <View style={styles.featuredMetric}>
+          <Text style={styles.metricLabel}>Total</Text>
+          <Text style={styles.metricValue}>
+            {formatMoney(order.grand_total)}
           </Text>
         </View>
 
-        <View style={styles.featuredDetailItem}>
-          <Icon name="shopping_bag" size={18} color={colors.textSecondary} />
-          <Text style={styles.featuredDetailText}>
-            {articleCount} article{articleCount !== 1 ? 's' : ''}
+        <View style={styles.metricDivider} />
+
+        <View style={styles.featuredMetric}>
+          <Text style={styles.metricLabel}>Statut</Text>
+          <Text
+            style={styles.metricStatusValue}
+            numberOfLines={1}
+          >
+            {STATUS_LABELS[order.status]}
           </Text>
         </View>
       </View>
 
-      <View style={styles.featuredFooter}>
-        <View>
-          <Text style={styles.totalLabel}>Total</Text>
-          <Text style={styles.featuredTotal}>{formatMoney(order.grand_total)}</Text>
+      {order.delivery_address ? (
+        <View style={styles.featuredAddress}>
+          <View style={styles.addressIcon}>
+            <Icon name="location_on" size={17} color="#087DFF" />
+          </View>
+          <Text
+            style={styles.featuredAddressText}
+            numberOfLines={2}
+          >
+            {order.delivery_address}
+          </Text>
         </View>
+      ) : null}
 
-        <Pressable
-          accessibilityRole="button"
-          style={({ pressed }) => [styles.trackButton, pressed && styles.buttonPressed]}
-          onPress={onPress}
-        >
-          <Text style={styles.trackButtonText}>Suivre la commande</Text>
-          <Icon name="arrow_forward" size={18} color={colors.white} />
-        </Pressable>
-      </View>
+      <Pressable
+        accessibilityRole="button"
+        style={({ pressed }) => [
+          styles.trackButton,
+          pressed && styles.buttonPressed,
+        ]}
+        onPress={onPress}
+      >
+        <Icon name="my_location" size={18} color="#FFFFFF" />
+        <Text style={styles.trackButtonText}>
+          Suivre la commande
+        </Text>
+        <Icon name="arrow_forward" size={18} color="#FFFFFF" />
+      </Pressable>
     </View>
   )
 }
 
-function OrderCard({ order, onPress }: { order: Order; onPress: () => void }) {
+function OrderCard({
+  order,
+  onPress,
+}: {
+  order: Order
+  onPress: () => void
+}) {
   const statusColors = STATUS_COLOR[order.status]
   const articleCount = getArticleCount(order)
-  const isActive = isActiveOrder(order.status)
 
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`Ouvrir la commande numéro ${order.id}`}
-      style={({ pressed }) => [styles.orderCard, pressed && styles.cardPressed]}
+      style={({ pressed }) => [
+        styles.orderCard,
+        pressed && styles.cardPressed,
+      ]}
       onPress={onPress}
     >
-      <View style={styles.orderCardHeader}>
-        <View style={styles.orderIdentity}>
-          <View style={[styles.orderStatusIcon, { backgroundColor: statusColors.bg }]}>
-            <Icon name={getStatusIcon(order.status)} size={21} color={statusColors.text} />
-          </View>
-          <View style={styles.flexContent}>
-            <Text style={styles.orderId}>Commande #{order.id}</Text>
-            <Text style={styles.orderDate}>{formatOrderDate(order.created_at)}</Text>
-          </View>
-        </View>
+      <View
+        style={[
+          styles.orderStatusIcon,
+          { backgroundColor: statusColors.bg },
+        ]}
+      >
+        <Icon
+          name={getStatusIcon(order.status)}
+          size={20}
+          color={statusColors.text}
+        />
+      </View>
 
-        <View style={[styles.statusBadge, { backgroundColor: statusColors.bg }]}>
-          <Text style={[styles.statusBadgeText, { color: statusColors.text }]}>
+      <View style={styles.orderMain}>
+        <Text style={styles.orderId}>
+          Commande #{order.id}
+        </Text>
+        <Text style={styles.orderDate}>
+          {formatOrderDate(order.created_at)}
+        </Text>
+        <Text
+          style={styles.orderMedicine}
+          numberOfLines={1}
+        >
+          {getMedicineSummary(order)}
+        </Text>
+        <Text style={styles.articleCount}>
+          {articleCount} article
+          {articleCount !== 1 ? 's' : ''}
+        </Text>
+      </View>
+
+      <View style={styles.orderRight}>
+        <View
+          style={[
+            styles.compactStatusBadge,
+            { backgroundColor: statusColors.bg },
+          ]}
+        >
+          <Text
+            style={[
+              styles.compactStatusText,
+              { color: statusColors.text },
+            ]}
+            numberOfLines={1}
+          >
             {STATUS_LABELS[order.status]}
           </Text>
         </View>
+
+        <Text style={styles.orderTotal}>
+          {formatMoney(order.grand_total)}
+        </Text>
       </View>
 
-      <Text style={styles.orderDescription}>{STATUS_DESCRIPTIONS[order.status]}</Text>
-
-      <View style={styles.orderInformationBox}>
-        <View style={styles.informationRow}>
-          <Icon name="medication" size={17} color={colors.textSecondary} />
-          <Text style={styles.informationText} numberOfLines={2}>
-            {getMedicineSummary(order)}
-          </Text>
-        </View>
-
-        {order.delivery_address ? (
-          <View style={styles.informationRow}>
-            <Icon name="location_on" size={17} color={colors.textSecondary} />
-            <Text style={styles.informationText} numberOfLines={1}>
-              {order.delivery_address}
-            </Text>
-          </View>
-        ) : null}
-      </View>
-
-      <View style={styles.orderCardFooter}>
-        <View>
-          <Text style={styles.articleCount}>
-            {articleCount} article{articleCount !== 1 ? 's' : ''}
-          </Text>
-          <Text style={styles.orderTotal}>{formatMoney(order.grand_total)}</Text>
-        </View>
-
-        <View style={styles.detailsAction}>
-          <Text style={styles.detailsActionText}>
-            {isActive ? 'Suivre' : 'Voir les détails'}
-          </Text>
-          <Icon name="chevron_right" size={21} color={colors.primary} />
-        </View>
-      </View>
+      <Icon name="chevron_right" size={22} color="#073BDF" />
     </Pressable>
   )
 }
@@ -653,526 +1028,791 @@ function getOrdersErrorMessage(error: unknown) {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: colors.surface,
+    backgroundColor: '#F7FAFF',
   },
   content: {
-    paddingHorizontal: 16,
-    paddingTop: 18,
-    paddingBottom: 32,
+    paddingBottom: 38,
   },
   headerContent: {
-    gap: 18,
+    gap: 16,
     marginBottom: 14,
   },
   flexContent: {
     flex: 1,
     minWidth: 0,
   },
-  title: {
-    color: colors.textPrimary,
-    fontSize: 25,
-    fontWeight: '800',
-    letterSpacing: -0.4,
+
+  hero: {
+    overflow: 'hidden',
+    paddingHorizontal: 18,
+    paddingTop: 20,
+    paddingBottom: 18,
+    borderBottomLeftRadius: 30,
+    borderBottomRightRadius: 30,
   },
-  subtitle: {
-    color: colors.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: 5,
-    maxWidth: 340,
+  heroGlowOne: {
+    position: 'absolute',
+    top: -82,
+    right: -72,
+    width: 230,
+    height: 230,
+    borderRadius: 115,
+    backgroundColor: 'rgba(255, 255, 255, 0.10)',
   },
+  heroGlowTwo: {
+    position: 'absolute',
+    bottom: -100,
+    right: 82,
+    width: 210,
+    height: 210,
+    borderRadius: 105,
+    backgroundColor: 'rgba(255, 255, 255, 0.07)',
+  },
+  heroTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 14,
+  },
+  heroCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  heroEyebrow: {
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: '900',
+    letterSpacing: 1.15,
+    color: '#D9F9FF',
+  },
+  heroTitle: {
+    marginTop: 7,
+    fontSize: 30,
+    lineHeight: 35,
+    fontWeight: '900',
+    letterSpacing: -0.8,
+    color: '#FFFFFF',
+  },
+  heroSubtitle: {
+    marginTop: 7,
+    maxWidth: 285,
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: '#EDF9FF',
+  },
+  heroBag: {
+    position: 'relative',
+    width: 72,
+    height: 72,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.70)',
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.88)',
+  },
+  heroBagSpark: {
+    position: 'absolute',
+    right: 7,
+    bottom: 7,
+    minWidth: 25,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 5,
+    borderRadius: 8,
+    backgroundColor: '#10D1D0',
+  },
+  heroBagSparkText: {
+    fontSize: 8,
+    lineHeight: 10,
+    fontWeight: '900',
+    color: '#FFFFFF',
+  },
+  heroActiveBanner: {
+    minHeight: 78,
+    marginTop: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.58)',
+    borderRadius: 19,
+    backgroundColor: 'rgba(255,255,255,0.90)',
+  },
+  heroActiveIcon: {
+    width: 46,
+    height: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 15,
+    backgroundColor: '#EAF3FF',
+  },
+  heroActiveContent: {
+    flex: 1,
+    minWidth: 0,
+  },
+  heroActiveTitle: {
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '900',
+    color: '#0B1F4D',
+  },
+  heroActiveText: {
+    marginTop: 3,
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '600',
+    color: '#657791',
+  },
+
   statsRow: {
     flexDirection: 'row',
-    gap: 9,
+    gap: 7,
+    paddingHorizontal: 16,
   },
   statCard: {
     flex: 1,
-    minHeight: 104,
+    minWidth: 0,
+    minHeight: 102,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.surfaceLowest,
-    borderRadius: 18,
+    paddingHorizontal: 5,
     borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    paddingHorizontal: 8,
-    paddingVertical: 12,
+    borderColor: '#DDE8F5',
+    borderRadius: 18,
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#12366F',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 9,
+    elevation: 2,
   },
   statIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
+    width: 31,
+    height: 31,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 6,
-  },
-  statValue: {
-    color: colors.textPrimary,
-    fontSize: 21,
-    fontWeight: '800',
+    borderRadius: 10,
   },
   statLabel: {
-    color: colors.textSecondary,
-    fontSize: 11,
-    fontWeight: '600',
-    marginTop: 1,
+    marginTop: 7,
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '800',
+    color: '#657791',
   },
+  statValue: {
+    marginTop: 2,
+    fontSize: 20,
+    lineHeight: 24,
+    fontWeight: '900',
+    letterSpacing: -0.4,
+    color: '#0B1F4D',
+  },
+
   inlineError: {
+    marginHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    backgroundColor: colors.errorBg,
-    borderColor: '#fecaca',
-    borderWidth: 1,
-    borderRadius: 16,
     padding: 12,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 16,
+    backgroundColor: '#FEF2F2',
   },
   inlineErrorIcon: {
     width: 36,
     height: 36,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.surfaceLowest,
     borderRadius: 11,
+    backgroundColor: '#FFFFFF',
   },
   inlineErrorContent: {
     flex: 1,
   },
   inlineErrorTitle: {
-    color: colors.errorText,
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#B42318',
   },
   inlineErrorText: {
-    color: '#991b1b',
-    fontSize: 11,
-    lineHeight: 16,
     marginTop: 2,
+    fontSize: 10,
+    lineHeight: 15,
+    color: '#991B1B',
   },
   retryIconButton: {
     width: 38,
     height: 38,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.surfaceLowest,
     borderRadius: 12,
+    backgroundColor: '#FFFFFF',
   },
+
   filtersContent: {
     gap: 8,
-    paddingRight: 4,
+    paddingHorizontal: 16,
+    paddingRight: 22,
   },
   filterChip: {
+    minHeight: 40,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 7,
-    minHeight: 40,
-    paddingLeft: 14,
-    paddingRight: 8,
-    borderRadius: 999,
-    backgroundColor: colors.surfaceLowest,
+    paddingHorizontal: 13,
     borderWidth: 1,
-    borderColor: colors.outlineVariant,
+    borderColor: '#D8E4F3',
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
   },
   filterChipSelected: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
+    borderColor: '#073BDF',
+    backgroundColor: '#073BDF',
+    shadowColor: '#073BDF',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.17,
+    shadowRadius: 7,
+    elevation: 2,
   },
   filterLabel: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '800',
+    color: '#526684',
   },
   filterLabelSelected: {
-    color: colors.white,
+    color: '#FFFFFF',
   },
   filterCount: {
-    minWidth: 25,
-    height: 25,
-    paddingHorizontal: 6,
+    minWidth: 22,
+    height: 22,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 999,
-    backgroundColor: colors.surface,
+    paddingHorizontal: 5,
+    borderRadius: 8,
+    backgroundColor: '#EEF4FB',
   },
   filterCountSelected: {
-    backgroundColor: 'rgba(255, 255, 255, 0.18)',
+    backgroundColor: 'rgba(255,255,255,0.20)',
   },
   filterCountText: {
-    color: colors.textSecondary,
-    fontSize: 11,
-    fontWeight: '700',
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '900',
+    color: '#526684',
   },
   filterCountTextSelected: {
-    color: colors.white,
+    color: '#FFFFFF',
   },
+
+  featuredSection: {
+    gap: 10,
+    paddingHorizontal: 16,
+  },
+  sectionHeading: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  sectionEyebrow: {
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '900',
+    letterSpacing: 1.05,
+    color: '#087DFF',
+  },
+  sectionTitle: {
+    marginTop: 2,
+    fontSize: 19,
+    lineHeight: 24,
+    fontWeight: '900',
+    letterSpacing: -0.35,
+    color: '#0B1F4D',
+  },
+  livePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: '#EAFBFA',
+  },
+  liveDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#10B9B2',
+  },
+  liveText: {
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '800',
+    color: '#0F766E',
+  },
+
   featuredCard: {
     overflow: 'hidden',
-    backgroundColor: colors.surfaceLowest,
-    borderWidth: 1,
-    borderColor: '#c7d2fe',
+    paddingHorizontal: 15,
+    paddingTop: 15,
+    paddingBottom: 14,
+    borderWidth: 1.5,
+    borderColor: '#8CB9FF',
     borderRadius: 22,
-    padding: 17,
-  },
-  featuredAccent: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 5,
-    backgroundColor: colors.primary,
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#073BDF',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.08,
+    shadowRadius: 13,
+    elevation: 3,
   },
   featuredHeader: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     justifyContent: 'space-between',
     gap: 10,
-    marginTop: 4,
   },
-  featuredTitleRow: {
+  featuredIdentity: {
     flex: 1,
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 11,
+    gap: 10,
   },
   featuredIcon: {
-    width: 46,
-    height: 46,
+    width: 48,
+    height: 48,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#eef2ff',
-    borderRadius: 14,
-  },
-  featuredEyebrow: {
-    color: colors.primary,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.8,
+    borderWidth: 1,
+    borderColor: '#D8E8FF',
+    borderRadius: 16,
+    backgroundColor: '#EEF5FF',
   },
   featuredOrderId: {
-    color: colors.textPrimary,
     fontSize: 16,
-    fontWeight: '800',
-    marginTop: 2,
+    lineHeight: 20,
+    fontWeight: '900',
+    letterSpacing: -0.2,
+    color: '#0B1F4D',
+  },
+  featuredMedicineSummary: {
+    marginTop: 3,
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '700',
+    color: '#087DFF',
   },
   statusBadge: {
-    maxWidth: 132,
+    maxWidth: 116,
+    minHeight: 29,
+    alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: 9,
-    paddingVertical: 5,
-    borderRadius: 999,
+    borderRadius: 10,
   },
   statusBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '900',
     textAlign: 'center',
   },
   featuredDescription: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 19,
-    marginTop: 14,
+    marginTop: 12,
+    fontSize: 10,
+    lineHeight: 16,
+    fontWeight: '600',
+    color: '#657791',
   },
-  progressHeader: {
+
+  progressRow: {
+    marginTop: 17,
+    flexDirection: 'row',
+  },
+  progressStage: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  progressTrackRow: {
+    width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 17,
-    marginBottom: 8,
   },
-  progressTitle: {
-    color: colors.textPrimary,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  progressStep: {
-    color: colors.textMuted,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  progressSegments: {
-    flexDirection: 'row',
-    gap: 5,
-  },
-  progressSegment: {
+  progressConnector: {
     flex: 1,
-    height: 6,
-    borderRadius: 999,
-    backgroundColor: '#e5e7eb',
+    height: 3,
+    backgroundColor: '#DCE6F2',
   },
-  progressSegmentCompleted: {
-    backgroundColor: colors.primary,
+  progressConnectorActive: {
+    backgroundColor: '#087DFF',
   },
-  featuredDetails: {
-    gap: 9,
+  progressConnectorSpacer: {
+    flex: 1,
+    height: 3,
+    backgroundColor: 'transparent',
+  },
+  progressDot: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    borderColor: '#DCE6F2',
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+  },
+  progressDotCompleted: {
+    borderColor: '#087DFF',
+    backgroundColor: '#087DFF',
+  },
+  progressDotCurrent: {
+    borderColor: '#087DFF',
+    backgroundColor: '#FFFFFF',
+  },
+  progressCurrentCenter: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#087DFF',
+  },
+  progressStageLabel: {
+    marginTop: 7,
+    paddingHorizontal: 2,
+    fontSize: 8,
+    lineHeight: 11,
+    fontWeight: '700',
+    textAlign: 'center',
+    color: '#8491A8',
+  },
+  progressStageLabelCurrent: {
+    color: '#073BDF',
+  },
+
+  featuredMetrics: {
+    minHeight: 68,
     marginTop: 16,
-    padding: 12,
-    backgroundColor: colors.surface,
-    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: '#E4ECF7',
   },
-  featuredDetailItem: {
+  featuredMetric: {
+    flex: 1,
+    alignItems: 'center',
+    paddingHorizontal: 5,
+  },
+  metricDivider: {
+    width: 1,
+    height: 38,
+    backgroundColor: '#E4ECF7',
+  },
+  metricLabel: {
+    fontSize: 8,
+    lineHeight: 11,
+    fontWeight: '700',
+    color: '#8491A8',
+  },
+  metricValue: {
+    marginTop: 3,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '900',
+    textAlign: 'center',
+    color: '#0B1F4D',
+  },
+  metricStatusValue: {
+    marginTop: 3,
+    fontSize: 9,
+    lineHeight: 13,
+    fontWeight: '900',
+    textAlign: 'center',
+    color: '#087DFF',
+  },
+
+  featuredAddress: {
+    marginTop: 11,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  featuredDetailText: {
-    flex: 1,
-    color: colors.textSecondary,
-    fontSize: 12,
-  },
-  featuredFooter: {
-    flexDirection: 'row',
+  addressIcon: {
+    width: 29,
+    height: 29,
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    marginTop: 16,
+    justifyContent: 'center',
+    borderRadius: 9,
+    backgroundColor: '#EEF5FF',
   },
-  totalLabel: {
-    color: colors.textMuted,
-    fontSize: 11,
+  featuredAddressText: {
+    flex: 1,
+    fontSize: 9,
+    lineHeight: 14,
     fontWeight: '600',
+    color: '#657791',
   },
-  featuredTotal: {
-    color: colors.textPrimary,
-    fontSize: 18,
-    fontWeight: '800',
-    marginTop: 2,
-  },
+
   trackButton: {
+    minHeight: 45,
+    marginTop: 13,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 7,
-    minHeight: 44,
-    paddingHorizontal: 15,
-    backgroundColor: colors.primary,
+    gap: 8,
     borderRadius: 14,
+    backgroundColor: '#073BDF',
+    shadowColor: '#073BDF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+    elevation: 3,
   },
   trackButtonText: {
-    color: colors.white,
-    fontSize: 12,
-    fontWeight: '700',
+    flex: 1,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '900',
+    textAlign: 'center',
+    color: '#FFFFFF',
   },
-  sectionHeadingRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
+
+  historyHeading: {
     marginTop: 2,
-  },
-  sectionTitle: {
-    color: colors.textPrimary,
-    fontSize: 17,
-    fontWeight: '800',
-  },
-  sectionCount: {
-    color: colors.textMuted,
-    fontSize: 11,
-    marginTop: 3,
-  },
-  orderCard: {
-    backgroundColor: colors.surfaceLowest,
-    borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    borderRadius: 19,
-    padding: 15,
-  },
-  cardPressed: {
-    opacity: 0.76,
-    transform: [{ scale: 0.995 }],
-  },
-  orderCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  orderIdentity: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  orderStatusIcon: {
-    width: 42,
-    height: 42,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 13,
-  },
-  orderId: {
-    color: colors.textPrimary,
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  orderDate: {
-    color: colors.textMuted,
-    fontSize: 11,
-    marginTop: 3,
-  },
-  orderDescription: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
-    marginTop: 12,
-  },
-  orderInformationBox: {
-    gap: 9,
-    marginTop: 12,
-    padding: 11,
-    backgroundColor: colors.surface,
-    borderRadius: 13,
-  },
-  informationRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-  },
-  informationText: {
-    flex: 1,
-    color: colors.textSecondary,
-    fontSize: 11,
-    lineHeight: 16,
-  },
-  orderCardFooter: {
+    paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'flex-end',
     justifyContent: 'space-between',
     gap: 12,
-    marginTop: 14,
   },
-  articleCount: {
-    color: colors.textMuted,
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  orderTotal: {
-    color: colors.textPrimary,
-    fontSize: 16,
-    fontWeight: '800',
-    marginTop: 2,
-  },
-  detailsAction: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 1,
-  },
-  detailsActionText: {
-    color: colors.primary,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  itemSeparator: {
-    height: 11,
-  },
-  emptyState: {
-    alignItems: 'center',
-    backgroundColor: colors.surfaceLowest,
-    borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    borderRadius: 20,
-    paddingHorizontal: 24,
-    paddingVertical: 36,
-  },
-  emptyIcon: {
-    width: 66,
-    height: 66,
+  historyCountPill: {
+    minWidth: 34,
+    height: 28,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#eef2ff',
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    backgroundColor: '#EAF3FF',
+  },
+  historyCountText: {
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: '900',
+    color: '#073BDF',
+  },
+
+  orderCard: {
+    marginHorizontal: 16,
+    minHeight: 108,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#DDE8F5',
+    borderRadius: 18,
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#12366F',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.045,
+    shadowRadius: 8,
+    elevation: 1,
+  },
+  cardPressed: {
+    opacity: 0.86,
+    transform: [{ scale: 0.995 }],
+  },
+  orderStatusIcon: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 13,
+  },
+  orderMain: {
+    flex: 1,
+    minWidth: 0,
+  },
+  orderId: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '900',
+    color: '#0B1F4D',
+  },
+  orderDate: {
+    marginTop: 2,
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: '600',
+    color: '#8491A8',
+  },
+  orderMedicine: {
+    marginTop: 5,
+    fontSize: 9,
+    lineHeight: 13,
+    fontWeight: '700',
+    color: '#526684',
+  },
+  articleCount: {
+    marginTop: 2,
+    fontSize: 8,
+    lineHeight: 11,
+    fontWeight: '600',
+    color: '#8491A8',
+  },
+  orderRight: {
+    width: 85,
+    alignItems: 'flex-end',
+  },
+  compactStatusBadge: {
+    maxWidth: 85,
+    minHeight: 25,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 7,
+    borderRadius: 9,
+  },
+  compactStatusText: {
+    fontSize: 8,
+    lineHeight: 11,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  orderTotal: {
+    marginTop: 9,
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '900',
+    textAlign: 'right',
+    color: '#0B1F4D',
+  },
+  itemSeparator: {
+    height: 10,
+  },
+
+  emptyState: {
+    marginHorizontal: 16,
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 34,
+    borderWidth: 1,
+    borderColor: '#DDE8F5',
     borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+  },
+  emptyIcon: {
+    width: 62,
+    height: 62,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 20,
+    backgroundColor: '#EEF5FF',
   },
   emptyTitle: {
-    color: colors.textPrimary,
-    fontSize: 16,
-    fontWeight: '800',
+    marginTop: 15,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '900',
     textAlign: 'center',
-    marginTop: 16,
+    color: '#0B1F4D',
   },
   emptyText: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 18,
-    textAlign: 'center',
-    marginTop: 6,
     maxWidth: 290,
+    marginTop: 6,
+    fontSize: 11,
+    lineHeight: 17,
+    textAlign: 'center',
+    color: '#657791',
   },
   secondaryButton: {
+    minHeight: 42,
+    marginTop: 17,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 7,
-    minHeight: 42,
     paddingHorizontal: 16,
-    backgroundColor: '#eef2ff',
     borderRadius: 13,
-    marginTop: 18,
+    backgroundColor: '#EEF5FF',
   },
   secondaryButtonText: {
-    color: colors.primary,
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#073BDF',
   },
+
   centeredScreen: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.surface,
     paddingHorizontal: 30,
+    backgroundColor: '#F7FAFF',
   },
   loadingIconContainer: {
     width: 60,
     height: 60,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#eef2ff',
-    borderRadius: 20,
     marginBottom: 18,
+    borderRadius: 20,
+    backgroundColor: '#EEF5FF',
   },
   errorIconContainer: {
-    backgroundColor: colors.errorBg,
+    backgroundColor: '#FEF2F2',
   },
   loadingTitle: {
-    color: colors.textPrimary,
-    fontSize: 16,
-    fontWeight: '800',
-    textAlign: 'center',
     marginTop: 16,
+    fontSize: 16,
+    fontWeight: '900',
+    textAlign: 'center',
+    color: '#0B1F4D',
   },
   loadingText: {
-    color: colors.textSecondary,
+    marginTop: 6,
+    fontSize: 11,
+    lineHeight: 17,
+    textAlign: 'center',
+    color: '#657791',
+  },
+  errorStateTitle: {
+    fontSize: 17,
+    fontWeight: '900',
+    textAlign: 'center',
+    color: '#0B1F4D',
+  },
+  errorStateText: {
+    maxWidth: 310,
+    marginTop: 8,
     fontSize: 12,
     lineHeight: 18,
     textAlign: 'center',
-    marginTop: 6,
-  },
-  errorStateTitle: {
-    color: colors.textPrimary,
-    fontSize: 18,
-    fontWeight: '800',
-    textAlign: 'center',
-  },
-  errorStateText: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 19,
-    textAlign: 'center',
-    marginTop: 8,
-    maxWidth: 310,
+    color: '#657791',
   },
   primaryButton: {
+    minHeight: 46,
+    marginTop: 20,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    minHeight: 46,
     paddingHorizontal: 20,
-    backgroundColor: colors.primary,
     borderRadius: 14,
-    marginTop: 20,
+    backgroundColor: '#073BDF',
   },
   primaryButtonText: {
-    color: colors.white,
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
   },
   buttonPressed: {
-    opacity: 0.76,
+    opacity: 0.78,
   },
 })

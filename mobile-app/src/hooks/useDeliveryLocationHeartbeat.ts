@@ -4,8 +4,8 @@ import * as Location from 'expo-location'
 import { deliveryApi } from '../api/delivery'
 
 const ONLINE_STATE_CHECK_MS = 30_000
-const LOCATION_HEARTBEAT_MS = 60_000
-const MIN_MOVEMENT_METERS = 25
+const LOCATION_HEARTBEAT_MS = 15_000
+const MIN_MOVEMENT_METERS = 15
 
 export function useDeliveryLocationHeartbeat() {
   const latestLocationRef =

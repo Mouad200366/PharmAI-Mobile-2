@@ -29,6 +29,61 @@ from .services.offers import (
 User = get_user_model()
 
 
+def _broadcast_active_order_location(*, user, profile):
+    """Broadcast the courier's latest persisted location for an active order."""
+    if not profile.is_online or profile.current_location is None:
+        return
+
+    from django.contrib.gis.db.models.functions import Distance
+
+    from apps.orders.constants import OrderStatus
+    from apps.orders.models import Order
+    from apps.search.services.eta import estimate_eta_minutes
+    from apps.tracking.services.broadcast import broadcast_location_update
+
+    active_order = (
+        Order.objects
+        .filter(
+            delivery_agent=user,
+            delivery_location__isnull=False,
+            status__in=(
+                OrderStatus.AWAITING_AGENT,
+                OrderStatus.PICKED_UP,
+                OrderStatus.OUT_FOR_DELIVERY,
+            ),
+        )
+        .annotate(
+            distance=Distance(
+                'delivery_location',
+                profile.current_location,
+            ),
+        )
+        .order_by('-updated_at', '-id')
+        .first()
+    )
+
+    if active_order is None or active_order.distance is None:
+        return
+
+    distance_m = round(active_order.distance.m)
+
+    broadcast_location_update(
+        active_order.id,
+        {
+            'order_id': active_order.id,
+            'agent_latitude': profile.current_location.y,
+            'agent_longitude': profile.current_location.x,
+            'distance_to_customer_m': distance_m,
+            'eta_minutes': estimate_eta_minutes(distance_m),
+            'status': active_order.status,
+            'location_updated_at': (
+                profile.location_updated_at.isoformat()
+                if profile.location_updated_at
+                else None
+            ),
+        },
+    )
+
 
 class _DeliveryAgentMixin:
     """Resolve the requesting user's delivery profile."""
@@ -202,6 +257,11 @@ class LocationView(_DeliveryAgentMixin, APIView):
                 'location_updated_at',
                 'updated_at',
             )
+        )
+
+        _broadcast_active_order_location(
+            user=request.user,
+            profile=profile,
         )
 
         return Response(

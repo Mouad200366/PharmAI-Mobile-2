@@ -41,12 +41,14 @@ export type MainStackParamList = {
   Cart: undefined
   Checkout: undefined
   OrderDetail: { id: number }
+  OrderChat: { orderId: number; peerLabel: string }
   Addresses: undefined
 }
 
 export type DeliveryMainStackParamList = {
   Tabs: NavigatorScreenParams<DeliveryTabParamList>
   Incident: { orderId: number }
+  OrderChat: { orderId: number; peerLabel: string }
 }
 
 export type RootStackParamList = {

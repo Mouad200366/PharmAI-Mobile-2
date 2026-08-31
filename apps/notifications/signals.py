@@ -15,10 +15,13 @@ _STATUS_NOTIFICATIONS = {
     OrderStatus.ACCEPTED: ('Order accepted', 'Your order has been accepted.'),
     OrderStatus.PREPARING: ('Order preparing', 'The pharmacy is preparing your order.'),
     OrderStatus.READY_FOR_PICKUP: ('Order ready', 'Your order is ready and an agent will pick it up.'),
+    OrderStatus.AWAITING_AGENT: ('Finding a courier', 'We are looking for a courier for your order.'),
+    OrderStatus.PICKED_UP: ('Order picked up', 'Your courier picked up the order from the pharmacy.'),
     OrderStatus.OUT_FOR_DELIVERY: ('Out for delivery', 'Your order is on its way.'),
     OrderStatus.DELIVERED: ('Order delivered', 'Your order has been delivered.'),
     OrderStatus.CANCELLED: ('Order cancelled', 'Your order has been cancelled.'),
     OrderStatus.REJECTED: ('Order rejected', 'Your order was rejected.'),
+    OrderStatus.FAILED: ('Delivery failed', 'Your order could not be completed.'),
 }
 
 

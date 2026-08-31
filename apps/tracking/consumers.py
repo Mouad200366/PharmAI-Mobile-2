@@ -135,6 +135,12 @@ class OrderTrackingConsumer(AsyncJsonWebsocketConsumer):
             'role': self.role,
         })
 
+        initial_location = await self._current_location_payload()
+        if initial_location is not None:
+            await self.location_update({
+                'payload': initial_location,
+            })
+
     async def disconnect(self, code):
         if hasattr(self, 'group'):
             await self.channel_layer.group_discard(self.group, self.channel_name)
@@ -155,6 +161,69 @@ class OrderTrackingConsumer(AsyncJsonWebsocketConsumer):
         if order.pharmacy and order.pharmacy.owner_id == user.id:
             return order
         return None
+
+    @database_sync_to_async
+    def _current_location_payload(self):
+        from apps.delivery.models import DeliveryAgentProfile
+        from apps.orders.constants import OrderStatus
+        from apps.search.services.eta import estimate_eta_minutes
+
+        order = (
+            Order.objects
+            .filter(
+                pk=self.order_id,
+                delivery_location__isnull=False,
+                status__in=(
+                    OrderStatus.AWAITING_AGENT,
+                    OrderStatus.PICKED_UP,
+                    OrderStatus.OUT_FOR_DELIVERY,
+                ),
+            )
+            .first()
+        )
+
+        if order is None or order.delivery_agent_id is None:
+            return None
+
+        profile = (
+            DeliveryAgentProfile.objects
+            .filter(user_id=order.delivery_agent_id)
+            .first()
+        )
+
+        if profile is None or not profile.has_fresh_location():
+            return None
+
+        tracked_order = (
+            Order.objects
+            .filter(pk=order.id)
+            .annotate(
+                distance=Distance(
+                    'delivery_location',
+                    profile.current_location,
+                ),
+            )
+            .first()
+        )
+
+        if tracked_order is None or tracked_order.distance is None:
+            return None
+
+        distance_m = round(tracked_order.distance.m)
+
+        return {
+            'order_id': tracked_order.id,
+            'agent_latitude': profile.current_location.y,
+            'agent_longitude': profile.current_location.x,
+            'distance_to_customer_m': distance_m,
+            'eta_minutes': estimate_eta_minutes(distance_m),
+            'status': tracked_order.status,
+            'location_updated_at': (
+                profile.location_updated_at.isoformat()
+                if profile.location_updated_at
+                else None
+            ),
+        }
 
     @staticmethod
     def _resolve_role(user, order) -> str:

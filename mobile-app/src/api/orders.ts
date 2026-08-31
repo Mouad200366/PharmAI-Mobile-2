@@ -8,6 +8,19 @@ export type OrderStatus =
 export type PrescriptionMode = 'none' | 'photo' | 'pickup'
 export type PaymentMethod = 'cash' | 'card'
 
+export type CustomerDeliveryIncidentStatus =
+  | 'open'
+  | 'return_required'
+  | 'returning'
+  | 'returned'
+
+export interface CustomerDeliveryIncident {
+  id: number
+  status: CustomerDeliveryIncidentStatus
+  created_at: string
+  updated_at: string
+}
+
 export interface PrescriptionPhotoUpload {
   uri: string
   name: string
@@ -48,6 +61,8 @@ export interface Order {
   items: OrderItem[]
   prescription: Prescription | null
   status_history: OrderStatusHistoryEntry[]
+  delivery_incident: CustomerDeliveryIncident | null
+  delivery_agent_name: string | null
   items_total: string
   delivery_fee: string
   grand_total: string

@@ -1,8 +1,10 @@
+// MEDICINE_DETAILS_APPROVED_MOCKUP_V1
 import {
   ActivityIndicator,
   Image,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   View,
@@ -10,11 +12,16 @@ import {
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
+  useMemo,
   useState,
 } from 'react'
 import type {
   NativeStackScreenProps,
 } from '@react-navigation/native-stack'
+import { LinearGradient } from 'expo-linear-gradient'
+import { StatusBar } from 'expo-status-bar'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import type {
   MainStackParamList,
@@ -30,6 +37,15 @@ type Props = NativeStackScreenProps<
   MainStackParamList,
   'MedicineDetails'
 >
+
+const SCREEN_BACKGROUND = '#f7faff'
+const NAVY = '#00236f'
+const BLUE = '#073bdf'
+const BRIGHT_BLUE = '#087dff'
+const CYAN = '#10d1d0'
+const TEXT = '#0b1f4d'
+const MUTED = '#687892'
+const BORDER = '#e2eaf5'
 
 function buildMedicinePrompt(medicine: Medicine) {
   const genericName = (medicine.generic_name ?? '').trim()
@@ -65,10 +81,38 @@ function formatPrice(
     .replace('.', ',')} ${currency}`
 }
 
+function formatTotalPrice(
+  price: string | null,
+  currency: string,
+  quantity: number,
+) {
+  if (price === null) {
+    return null
+  }
+
+  const numericPrice = Number(price)
+
+  if (Number.isNaN(numericPrice)) {
+    return null
+  }
+
+  return `${(numericPrice * quantity)
+    .toFixed(2)
+    .replace('.', ',')} ${currency}`
+}
+
 export default function MedicineDetails({
   navigation,
   route,
 }: Props) {
+  const insets = useSafeAreaInsets()
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerShown: false,
+    })
+  }, [navigation])
+
   const [medicine, setMedicine] =
     useState<Medicine | null>(null)
 
@@ -93,7 +137,18 @@ export default function MedicineDetails({
     (state) => state.updateQuantity,
   )
 
-  const quantity = cartItem?.quantity ?? 0
+  const cartCount = useCartStore(
+    (state) => state.totalItems(),
+  )
+
+  const [selectedQuantity, setSelectedQuantity] =
+    useState(cartItem?.quantity ?? 1)
+
+  useEffect(() => {
+    if (cartItem?.quantity) {
+      setSelectedQuantity(cartItem.quantity)
+    }
+  }, [cartItem?.quantity])
 
   const loadMedicine = useCallback(async () => {
     try {
@@ -115,33 +170,79 @@ export default function MedicineDetails({
   }, [route.params.id])
 
   useEffect(() => {
-    loadMedicine()
+    void loadMedicine()
   }, [loadMedicine])
 
+  const displayedPrice = useMemo(() => {
+    if (!medicine) {
+      return ''
+    }
+
+    return formatPrice(
+      medicine.min_price,
+      medicine.currency,
+    )
+  }, [medicine])
+
+  const totalPrice = useMemo(() => {
+    if (!medicine) {
+      return null
+    }
+
+    return formatTotalPrice(
+      medicine.min_price,
+      medicine.currency,
+      selectedQuantity,
+    )
+  }, [medicine, selectedQuantity])
+
+  const maxQuantity =
+    medicine?.total_available_quantity ?? 0
+
+  const canDecrease = selectedQuantity > 1
+
+  const canIncrease = Boolean(
+    medicine?.is_available
+      && selectedQuantity < maxQuantity,
+  )
+
+  function handleDecrease() {
+    if (!canDecrease) {
+      return
+    }
+
+    setSelectedQuantity((current) => current - 1)
+  }
+
   function handleIncrease() {
+    if (!canIncrease) {
+      return
+    }
+
+    setSelectedQuantity((current) => current + 1)
+  }
+
+  function commitSelectedQuantity() {
     if (!medicine || !medicine.is_available) {
       return
     }
 
-    if (
-      quantity >=
-      medicine.total_available_quantity
-    ) {
+    if (cartItem) {
+      updateQuantity(
+        medicine.id,
+        selectedQuantity,
+      )
       return
     }
 
-    addItem(medicine)
+    addItem(
+      medicine,
+      selectedQuantity,
+    )
   }
 
-  function handleDecrease() {
-    if (!medicine) {
-      return
-    }
-
-    updateQuantity(
-      medicine.id,
-      quantity - 1,
-    )
+  function handleAddToCart() {
+    commitSelectedQuantity()
   }
 
   function handleBuyNow() {
@@ -149,19 +250,40 @@ export default function MedicineDetails({
       return
     }
 
-    if (quantity === 0) {
-      addItem(medicine)
+    commitSelectedQuantity()
+    navigation.navigate('Cart')
+  }
+
+  async function handleShare() {
+    if (!medicine) {
+      return
     }
 
-    navigation.navigate('Cart')
+    const genericName =
+      medicine.generic_name?.trim()
+
+    const message = genericName
+      ? `${medicine.name} — ${genericName}`
+      : medicine.name
+
+    try {
+      await Share.share({
+        message,
+        title: medicine.name,
+      })
+    } catch {
+      // Native sharing can be dismissed by the user.
+    }
   }
 
   if (loading) {
     return (
       <View style={styles.centeredScreen}>
+        <StatusBar style="dark" />
+
         <ActivityIndicator
           size="large"
-          color="#00236f"
+          color={NAVY}
         />
 
         <Text style={styles.loadingText}>
@@ -174,6 +296,8 @@ export default function MedicineDetails({
   if (error || !medicine) {
     return (
       <View style={styles.centeredScreen}>
+        <StatusBar style="dark" />
+
         <View style={styles.errorIcon}>
           <Icon
             name="error_outline"
@@ -192,7 +316,9 @@ export default function MedicineDetails({
 
         <Pressable
           style={styles.retryButton}
-          onPress={loadMedicine}
+          onPress={() => {
+            void loadMedicine()
+          }}
         >
           <Icon
             name="refresh"
@@ -208,219 +334,442 @@ export default function MedicineDetails({
     )
   }
 
-  const displayedPrice = formatPrice(
-    medicine.min_price,
-    medicine.currency,
-  )
-
-  const canIncrease =
-    medicine.is_available &&
-    quantity <
-      medicine.total_available_quantity
-
   const pharmacyLabel =
     medicine.available_pharmacies_count === 1
-      ? '1 pharmacie disponible'
-      : `${medicine.available_pharmacies_count} pharmacies disponibles`
+      ? '1 pharmacie'
+      : `${medicine.available_pharmacies_count} pharmacies`
+
+  const prescriptionLabel =
+    medicine.requires_prescription
+      ? 'Ordonnance requise'
+      : 'Sans ordonnance'
+
+  const availabilityLabel =
+    medicine.is_available
+      ? 'En stock'
+      : 'Indisponible'
 
   return (
     <View style={styles.screen}>
+      <StatusBar style="light" />
+
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[
+          styles.content,
+          {
+            paddingBottom:
+              178 + Math.max(insets.bottom, 10),
+          },
+        ]}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.imageSection}>
-          {medicine.image ? (
-            <Image
-              source={{ uri: medicine.image }}
-              style={styles.image}
-              resizeMode="contain"
-            />
-          ) : (
-            <View style={styles.imageFallback}>
+        <LinearGradient
+          colors={[
+            NAVY,
+            BLUE,
+            BRIGHT_BLUE,
+            CYAN,
+          ]}
+          start={{ x: 0, y: 0.2 }}
+          end={{ x: 1, y: 0.85 }}
+          style={[
+            styles.hero,
+            {
+              paddingTop: insets.top + 12,
+            },
+          ]}
+        >
+          <View style={styles.heroActions}>
+            <Pressable
+              style={styles.heroActionButton}
+              onPress={() => navigation.goBack()}
+              accessibilityRole="button"
+              accessibilityLabel="Retour"
+            >
               <Icon
-                name="medication"
-                size={80}
-                color="#64748b"
+                name="arrow_back_ios_new"
+                size={19}
+                color="#ffffff"
               />
-            </View>
-          )}
-        </View>
+            </Pressable>
 
-        <View style={styles.mainInformation}>
-          <View style={styles.titleRow}>
-            <View style={styles.titleContent}>
-              <Text style={styles.name}>
+            <View style={styles.heroActionGroup}>
+              <Pressable
+                style={styles.heroActionButton}
+                onPress={() =>
+                  navigation.navigate('Cart')
+                }
+                accessibilityRole="button"
+                accessibilityLabel="Ouvrir le panier"
+              >
+                <Icon
+                  name="shopping_cart"
+                  size={22}
+                  color="#ffffff"
+                />
+
+                {cartCount > 0 ? (
+                  <View style={styles.cartBadge}>
+                    <Text style={styles.cartBadgeText}>
+                      {cartCount > 99 ? '99+' : cartCount}
+                    </Text>
+                  </View>
+                ) : null}
+              </Pressable>
+
+              <Pressable
+                style={styles.heroActionButton}
+                onPress={() => {
+                  void handleShare()
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Partager"
+              >
+                <Icon
+                  name="ios_share"
+                  size={22}
+                  color="#ffffff"
+                />
+              </Pressable>
+            </View>
+          </View>
+
+          <View style={styles.heroProductRow}>
+            <View style={styles.productImageCard}>
+              {medicine.image ? (
+                <Image
+                  source={{ uri: medicine.image }}
+                  style={styles.productImage}
+                  resizeMode="contain"
+                />
+              ) : (
+                <View style={styles.productImageFallback}>
+                  <Icon
+                    name="medication"
+                    size={62}
+                    color="#6b7c96"
+                  />
+
+                  <Text style={styles.imageFallbackText}>
+                    Image non disponible
+                  </Text>
+                </View>
+              )}
+
+              <View style={styles.imageDots}>
+                <View
+                  style={[
+                    styles.imageDot,
+                    styles.imageDotActive,
+                  ]}
+                />
+                <View style={styles.imageDot} />
+                <View style={styles.imageDot} />
+                <View style={styles.imageDot} />
+              </View>
+            </View>
+
+            <View style={styles.heroInformation}>
+              <View
+                style={[
+                  styles.stockBadge,
+                  medicine.is_available
+                    ? styles.stockBadgeAvailable
+                    : styles.stockBadgeUnavailable,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.stockBadgeText,
+                    {
+                      color: medicine.is_available
+                        ? '#14945b'
+                        : '#c2413b',
+                    },
+                  ]}
+                >
+                  {availabilityLabel}
+                </Text>
+              </View>
+
+              <Text
+                style={styles.productName}
+                numberOfLines={3}
+              >
                 {medicine.name}
               </Text>
 
-              <Text style={styles.genericName}>
-                {medicine.generic_name}
-              </Text>
-            </View>
+              {medicine.generic_name?.trim() ? (
+                <Text
+                  style={styles.genericName}
+                  numberOfLines={2}
+                >
+                  {medicine.generic_name}
+                </Text>
+              ) : null}
 
+              <View style={styles.medicineBadge}>
+                <Icon
+                  name="science"
+                  size={15}
+                  color={BLUE}
+                />
+
+                <Text style={styles.medicineBadgeText}>
+                  Médicament
+                </Text>
+              </View>
+            </View>
+          </View>
+        </LinearGradient>
+
+        <View style={styles.priceOverview}>
+          <View style={styles.manufacturerLine}>
+            <Icon
+              name="business"
+              size={18}
+              color="#f6ad17"
+            />
+
+            <Text
+              style={styles.manufacturerText}
+              numberOfLines={1}
+            >
+              {medicine.manufacturer || 'Fabricant non renseigné'}
+            </Text>
+          </View>
+
+          <Text
+            style={[
+              styles.price,
+              !medicine.is_available
+                && styles.priceUnavailable,
+            ]}
+          >
+            {medicine.is_available
+              ? displayedPrice
+              : 'Indisponible'}
+          </Text>
+
+          <Text style={styles.priceHint}>
+            Prix minimum disponible • TTC
+          </Text>
+        </View>
+
+        <View style={styles.trustCard}>
+          <View style={styles.trustItem}>
             <View
               style={[
-                styles.prescriptionBadge,
-                medicine.requires_prescription
-                  ? styles.prescriptionRequired
-                  : styles.noPrescription,
+                styles.trustIcon,
+                { backgroundColor: '#eef4ff' },
               ]}
             >
               <Icon
                 name={
                   medicine.requires_prescription
                     ? 'lock'
-                    : 'verified'
+                    : 'verified_user'
                 }
-                size={14}
-                color={
-                  medicine.requires_prescription
-                    ? '#b45309'
-                    : '#15803d'
-                }
+                size={24}
+                color={BLUE}
               />
-
-              <Text
-                style={[
-                  styles.prescriptionText,
-                  {
-                    color:
-                      medicine.requires_prescription
-                        ? '#b45309'
-                        : '#15803d',
-                  },
-                ]}
-              >
-                {medicine.requires_prescription
-                  ? 'Ordonnance requise'
-                  : 'Sans ordonnance'}
-              </Text>
             </View>
-          </View>
 
-          <View style={styles.manufacturerRow}>
-            <Icon
-              name="business"
-              size={16}
-              color="#64748b"
-            />
-
-            <Text style={styles.manufacturer}>
-              {medicine.manufacturer}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.priceCard}>
-          <View>
-            <Text style={styles.priceLabel}>
-              Prix à partir de
+            <Text style={styles.trustTitle}>
+              Ordonnance
             </Text>
 
             <Text
-              style={[
-                styles.price,
-                !medicine.is_available &&
-                  styles.unavailablePrice,
-              ]}
+              style={styles.trustSubtitle}
+              numberOfLines={2}
             >
-              {medicine.is_available
-                ? displayedPrice
-                : 'Indisponible'}
-            </Text>
-
-            <Text style={styles.priceNotice}>
-              Prix estimatif selon la pharmacie
+              {medicine.requires_prescription
+                ? 'Requise'
+                : 'Non requise'}
             </Text>
           </View>
 
-          <View
-            style={[
-              styles.availabilityBox,
-              medicine.is_available
-                ? styles.availableBox
-                : styles.unavailableBox,
-            ]}
-          >
+          <View style={styles.trustDivider} />
+
+          <View style={styles.trustItem}>
             <View
               style={[
-                styles.availabilityDot,
-                {
-                  backgroundColor:
-                    medicine.is_available
-                      ? '#16a34a'
-                      : '#dc2626',
-                },
-              ]}
-            />
-
-            <Text
-              style={[
-                styles.availabilityText,
-                {
-                  color: medicine.is_available
-                    ? '#15803d'
-                    : '#dc2626',
-                },
+                styles.trustIcon,
+                { backgroundColor: '#ecfbf4' },
               ]}
             >
-              {medicine.is_available
-                ? pharmacyLabel
-                : 'Stock indisponible'}
+              <Icon
+                name="inventory_2"
+                size={24}
+                color="#11a865"
+              />
+            </View>
+
+            <Text style={styles.trustTitle}>
+              Disponibilité
+            </Text>
+
+            <Text
+              style={styles.trustSubtitle}
+              numberOfLines={2}
+            >
+              {availabilityLabel}
+            </Text>
+          </View>
+
+          <View style={styles.trustDivider} />
+
+          <View style={styles.trustItem}>
+            <View
+              style={[
+                styles.trustIcon,
+                { backgroundColor: '#f4efff' },
+              ]}
+            >
+              <Icon
+                name="local_pharmacy"
+                size={24}
+                color="#8157ef"
+              />
+            </View>
+
+            <Text style={styles.trustTitle}>
+              Pharmacies
+            </Text>
+
+            <Text
+              style={styles.trustSubtitle}
+              numberOfLines={2}
+            >
+              {pharmacyLabel}
+            </Text>
+          </View>
+
+          <View style={styles.trustDivider} />
+
+          <View style={styles.trustItem}>
+            <View
+              style={[
+                styles.trustIcon,
+                { backgroundColor: '#fff5e6' },
+              ]}
+            >
+              <Icon
+                name="inventory"
+                size={24}
+                color="#f59e0b"
+              />
+            </View>
+
+            <Text style={styles.trustTitle}>
+              Stock
+            </Text>
+
+            <Text
+              style={styles.trustSubtitle}
+              numberOfLines={2}
+            >
+              {medicine.total_available_quantity} unité
+              {medicine.total_available_quantity > 1
+                ? 's'
+                : ''}
             </Text>
           </View>
         </View>
 
         <View style={styles.sectionCard}>
-          <View style={styles.sectionHeader}>
-            <Icon
-              name="description"
-              size={20}
-              color="#00236f"
-            />
-
-            <Text style={styles.sectionTitle}>
-              Description
-            </Text>
-          </View>
+          <Text style={styles.sectionTitle}>
+            Description
+          </Text>
 
           <Text style={styles.description}>
-            {medicine.description ||
-              'Aucune description disponible pour ce médicament.'}
+            {medicine.description?.trim()
+              || 'Aucune description disponible pour ce médicament.'}
           </Text>
         </View>
 
         <View style={styles.sectionCard}>
-          <View style={styles.sectionHeader}>
-            <Icon
-              name="inventory_2"
-              size={20}
-              color="#00236f"
-            />
-
-            <Text style={styles.sectionTitle}>
-              Disponibilité
-            </Text>
-          </View>
+          <Text style={styles.sectionTitle}>
+            Informations
+          </Text>
 
           <View style={styles.informationRow}>
+            <View style={styles.informationIcon}>
+              <Icon
+                name="business"
+                size={19}
+                color={BLUE}
+              />
+            </View>
+
             <Text style={styles.informationLabel}>
-              Pharmacies
+              Fabricant
             </Text>
 
-            <Text style={styles.informationValue}>
-              {
-                medicine.available_pharmacies_count
-              }
+            <Text
+              style={styles.informationValue}
+              numberOfLines={1}
+            >
+              {medicine.manufacturer || 'Non renseigné'}
             </Text>
           </View>
 
           <View style={styles.separator} />
 
           <View style={styles.informationRow}>
+            <View style={styles.informationIcon}>
+              <Icon
+                name="prescriptions"
+                size={19}
+                color={BLUE}
+              />
+            </View>
+
             <Text style={styles.informationLabel}>
-              Quantité totale disponible
+              Prescription
+            </Text>
+
+            <Text
+              style={styles.informationValue}
+              numberOfLines={1}
+            >
+              {prescriptionLabel}
+            </Text>
+          </View>
+
+          <View style={styles.separator} />
+
+          <View style={styles.informationRow}>
+            <View style={styles.informationIcon}>
+              <Icon
+                name="local_pharmacy"
+                size={19}
+                color={BLUE}
+              />
+            </View>
+
+            <Text style={styles.informationLabel}>
+              Pharmacies
+            </Text>
+
+            <Text style={styles.informationValue}>
+              {medicine.available_pharmacies_count}
+            </Text>
+          </View>
+
+          <View style={styles.separator} />
+
+          <View style={styles.informationRow}>
+            <View style={styles.informationIcon}>
+              <Icon
+                name="inventory_2"
+                size={19}
+                color={BLUE}
+              />
+            </View>
+
+            <Text style={styles.informationLabel}>
+              Stock total
             </Text>
 
             <Text style={styles.informationValue}>
@@ -429,134 +778,183 @@ export default function MedicineDetails({
           </View>
         </View>
 
-        <Pressable
-          style={styles.assistantButton}
-          onPress={() =>
-            navigation.navigate('Tabs', {
-              screen: 'Assistant',
-              params: {
-                autoRequest: {
-                  requestId: `${medicine.id}-${Date.now()}`,
-                  prompt: buildMedicinePrompt(medicine),
-                },
-              },
-            })
-          }
-        >
-          <View style={styles.assistantIcon}>
-            <Icon
-              name="smart_toy"
-              size={22}
-              color="#ffffff"
-            />
+        <View style={styles.adviceCard}>
+          <View style={styles.adviceHeader}>
+            <View style={styles.adviceAvatar}>
+              <Icon
+                name="smart_toy"
+                size={24}
+                color="#ffffff"
+              />
+            </View>
+
+            <View style={styles.adviceHeaderText}>
+              <Text style={styles.adviceTitle}>
+                Besoin d’un conseil ?
+              </Text>
+
+              <Text style={styles.adviceSubtitle}>
+                PharmAgent peut expliquer les précautions,
+                indications et interactions importantes.
+              </Text>
+            </View>
           </View>
 
-          <View style={styles.assistantContent}>
-            <Text style={styles.assistantTitle}>
+          <Pressable
+            style={styles.adviceButton}
+            onPress={() =>
+              navigation.navigate('Tabs', {
+                screen: 'Assistant',
+                params: {
+                  autoRequest: {
+                    requestId:
+                      `${medicine.id}-${Date.now()}`,
+                    prompt:
+                      buildMedicinePrompt(medicine),
+                  },
+                },
+              })
+            }
+          >
+            <Icon
+              name="forum"
+              size={19}
+              color="#ffffff"
+            />
+
+            <Text style={styles.adviceButtonText}>
               Demander à PharmAgent
             </Text>
 
-            <Text style={styles.assistantSubtitle}>
-              Obtenir des informations et précautions
-              concernant {medicine.name}
-            </Text>
-          </View>
-
-          <Icon
-            name="chevron_right"
-            size={22}
-            color="#ffffff"
-          />
-        </Pressable>
-
-        <View style={styles.bottomSpace} />
+            <Icon
+              name="arrow_forward"
+              size={18}
+              color="#ffffff"
+            />
+          </Pressable>
+        </View>
       </ScrollView>
 
-      <View style={styles.purchaseBar}>
-        {medicine.is_available ? (
-          <>
-            {quantity === 0 ? (
-              <Pressable
-                style={styles.addButton}
-                onPress={handleIncrease}
-              >
-                <Icon
-                  name="add_shopping_cart"
-                  size={20}
-                  color="#00236f"
-                />
+      <View
+        style={[
+          styles.purchasePanel,
+          {
+            paddingBottom:
+              Math.max(insets.bottom, 10),
+          },
+        ]}
+      >
+        <View style={styles.quantityArea}>
+          <Text style={styles.quantityLabel}>
+            Quantité
+          </Text>
 
-                <Text style={styles.addButtonText}>
-                  Ajouter
-                </Text>
-              </Pressable>
-            ) : (
-              <View style={styles.quantityControl}>
-                <Pressable
-                  style={styles.quantityButton}
-                  onPress={handleDecrease}
-                >
-                  <Icon
-                    name="remove"
-                    size={20}
-                    color="#00236f"
-                  />
-                </Pressable>
-
-                <Text style={styles.quantityValue}>
-                  {quantity}
-                </Text>
-
-                <Pressable
-                  style={[
-                    styles.quantityButton,
-                    !canIncrease &&
-                      styles.disabledQuantityButton,
-                  ]}
-                  onPress={handleIncrease}
-                  disabled={!canIncrease}
-                >
-                  <Icon
-                    name="add"
-                    size={20}
-                    color={
-                      canIncrease
-                        ? '#00236f'
-                        : '#94a3b8'
-                    }
-                  />
-                </Pressable>
-              </View>
-            )}
-
+          <View style={styles.quantityControl}>
             <Pressable
-              style={styles.buyButton}
-              onPress={handleBuyNow}
+              style={[
+                styles.quantityButton,
+                !canDecrease
+                  && styles.quantityButtonDisabled,
+              ]}
+              onPress={handleDecrease}
+              disabled={!canDecrease}
             >
-              <Text style={styles.buyButtonText}>
-                Acheter maintenant
-              </Text>
-
               <Icon
-                name="arrow_forward"
-                size={19}
-                color="#ffffff"
+                name="remove"
+                size={20}
+                color={
+                  canDecrease
+                    ? TEXT
+                    : '#a8b2c2'
+                }
               />
             </Pressable>
-          </>
-        ) : (
-          <View style={styles.unavailableButton}>
+
+            <Text style={styles.quantityValue}>
+              {selectedQuantity}
+            </Text>
+
+            <Pressable
+              style={[
+                styles.quantityButton,
+                !canIncrease
+                  && styles.quantityButtonDisabled,
+              ]}
+              onPress={handleIncrease}
+              disabled={!canIncrease}
+            >
+              <Icon
+                name="add"
+                size={20}
+                color={
+                  canIncrease
+                    ? BLUE
+                    : '#a8b2c2'
+                }
+              />
+            </Pressable>
+          </View>
+        </View>
+
+        <View style={styles.purchaseActions}>
+          <Pressable
+            style={[
+              styles.addToCartButton,
+              !medicine.is_available
+                && styles.disabledPurchaseButton,
+            ]}
+            onPress={handleAddToCart}
+            disabled={!medicine.is_available}
+          >
             <Icon
-              name="inventory_2"
+              name="shopping_cart"
               size={20}
-              color="#94a3b8"
+              color="#ffffff"
             />
 
-            <Text style={styles.unavailableButtonText}>
-              Médicament indisponible
+            <Text style={styles.addToCartText}>
+              {medicine.is_available
+                ? 'Ajouter au panier'
+                : 'Indisponible'}
             </Text>
-          </View>
-        )}
+
+            {totalPrice && medicine.is_available ? (
+              <Text style={styles.addToCartPrice}>
+                {totalPrice}
+              </Text>
+            ) : null}
+          </Pressable>
+
+          <Pressable
+            style={[
+              styles.buyNowButton,
+              !medicine.is_available
+                && styles.buyNowButtonDisabled,
+            ]}
+            onPress={handleBuyNow}
+            disabled={!medicine.is_available}
+          >
+            <Icon
+              name="bolt"
+              size={19}
+              color={
+                medicine.is_available
+                  ? BLUE
+                  : '#94a3b8'
+              }
+            />
+
+            <Text
+              style={[
+                styles.buyNowText,
+                !medicine.is_available
+                  && styles.buyNowTextDisabled,
+              ]}
+            >
+              Acheter maintenant
+            </Text>
+          </Pressable>
+        </View>
       </View>
     </View>
   )
@@ -565,11 +963,11 @@ export default function MedicineDetails({
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: SCREEN_BACKGROUND,
   },
 
   content: {
-    paddingBottom: 20,
+    backgroundColor: SCREEN_BACKGROUND,
   },
 
   centeredScreen: {
@@ -577,13 +975,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
-    backgroundColor: '#f8fafc',
+    backgroundColor: SCREEN_BACKGROUND,
   },
 
   loadingText: {
     marginTop: 12,
-    color: '#64748b',
+    color: MUTED,
     fontSize: 14,
+    fontWeight: '600',
   },
 
   errorIcon: {
@@ -597,14 +996,14 @@ const styles = StyleSheet.create({
 
   errorTitle: {
     marginTop: 16,
-    color: '#0f172a',
-    fontSize: 18,
-    fontWeight: '800',
+    color: TEXT,
+    fontSize: 20,
+    fontWeight: '900',
   },
 
   errorText: {
-    marginTop: 7,
-    color: '#64748b',
+    marginTop: 8,
+    color: MUTED,
     fontSize: 14,
     lineHeight: 20,
     textAlign: 'center',
@@ -617,8 +1016,8 @@ const styles = StyleSheet.create({
     marginTop: 20,
     paddingHorizontal: 20,
     paddingVertical: 12,
-    borderRadius: 12,
-    backgroundColor: '#00236f',
+    borderRadius: 14,
+    backgroundColor: NAVY,
   },
 
   retryButtonText: {
@@ -626,340 +1025,531 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
-  imageSection: {
-    height: 280,
-    padding: 24,
-    backgroundColor: '#ffffff',
+  hero: {
+    minHeight: 352,
+    paddingHorizontal: 18,
+    paddingBottom: 30,
+    borderBottomLeftRadius: 34,
+    borderBottomRightRadius: 34,
   },
 
-  image: {
-    width: '100%',
-    height: '100%',
+  heroActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 22,
   },
 
-  imageFallback: {
-    flex: 1,
+  heroActionGroup: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+
+  heroActionButton: {
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.42)',
+    borderRadius: 15,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+
+  cartBadge: {
+    position: 'absolute',
+    top: -7,
+    right: -7,
+    minWidth: 21,
+    height: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 5,
+    borderWidth: 2,
+    borderColor: '#ffffff',
+    borderRadius: 11,
+    backgroundColor: '#ff304f',
+  },
+
+  cartBadgeText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '900',
+  },
+
+  heroProductRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+
+  productImageCard: {
+    width: '48%',
+    height: 214,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 12,
+    borderRadius: 26,
+    backgroundColor: '#ffffff',
+    shadowColor: '#00184d',
+    shadowOffset: {
+      width: 0,
+      height: 10,
+    },
+    shadowOpacity: 0.16,
+    shadowRadius: 18,
+    elevation: 9,
+  },
+
+  productImage: {
+    width: '100%',
+    height: 168,
+  },
+
+  productImageFallback: {
+    width: '100%',
+    height: 164,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 20,
     backgroundColor: '#f1f5f9',
   },
 
-  mainInformation: {
-    paddingHorizontal: 18,
-    paddingTop: 20,
-    paddingBottom: 16,
-    backgroundColor: '#ffffff',
+  imageFallbackText: {
+    marginTop: 9,
+    color: '#7a879b',
+    fontSize: 11,
+    fontWeight: '700',
   },
 
-  titleRow: {
-    gap: 12,
+  imageDots: {
+    flexDirection: 'row',
+    gap: 7,
+    marginTop: 6,
   },
 
-  titleContent: {
+  imageDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#c9d2df',
+  },
+
+  imageDotActive: {
+    width: 16,
+    backgroundColor: BLUE,
+  },
+
+  heroInformation: {
     flex: 1,
+    alignItems: 'flex-start',
   },
 
-  name: {
-    color: '#0f172a',
-    fontSize: 26,
+  stockBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 10,
+  },
+
+  stockBadgeAvailable: {
+    backgroundColor: '#f0fff7',
+  },
+
+  stockBadgeUnavailable: {
+    backgroundColor: '#fff2f1',
+  },
+
+  stockBadgeText: {
+    fontSize: 13,
     fontWeight: '900',
+  },
+
+  productName: {
+    marginTop: 14,
+    color: '#ffffff',
+    fontSize: 25,
+    lineHeight: 29,
+    fontWeight: '900',
+    letterSpacing: -0.45,
   },
 
   genericName: {
-    marginTop: 4,
-    color: '#475569',
-    fontSize: 16,
+    marginTop: 7,
+    color: '#edf8ff',
+    fontSize: 15,
+    lineHeight: 20,
     fontWeight: '600',
   },
 
-  prescriptionBadge: {
-    alignSelf: 'flex-start',
+  medicineBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    marginTop: 12,
+    marginTop: 14,
     paddingHorizontal: 10,
     paddingVertical: 7,
-    borderWidth: 1,
-    borderRadius: 999,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.92)',
   },
 
-  prescriptionRequired: {
-    borderColor: '#fde68a',
-    backgroundColor: '#fffbeb',
-  },
-
-  noPrescription: {
-    borderColor: '#bbf7d0',
-    backgroundColor: '#f0fdf4',
-  },
-
-  prescriptionText: {
+  medicineBadgeText: {
+    color: BLUE,
     fontSize: 12,
-    fontWeight: '800',
-  },
-
-  manufacturerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-    marginTop: 16,
-  },
-
-  manufacturer: {
-    color: '#64748b',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-
-  priceCard: {
-    margin: 16,
-    padding: 18,
-    gap: 16,
-    borderWidth: 1,
-    borderColor: '#dbeafe',
-    borderRadius: 18,
-    backgroundColor: '#eff6ff',
-  },
-
-  priceLabel: {
-    color: '#64748b',
-    fontSize: 12,
-  },
-
-  price: {
-    marginTop: 2,
-    color: '#00236f',
-    fontSize: 27,
     fontWeight: '900',
   },
 
-  unavailablePrice: {
-    color: '#94a3b8',
+  priceOverview: {
+    paddingHorizontal: 20,
+    paddingTop: 22,
+    paddingBottom: 18,
   },
 
-  priceNotice: {
-    marginTop: 4,
-    color: '#64748b',
-    fontSize: 11,
-  },
-
-  availabilityBox: {
-    alignSelf: 'flex-start',
+  manufacturerLine: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 7,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 999,
+    gap: 8,
   },
 
-  availableBox: {
-    backgroundColor: '#dcfce7',
+  manufacturerText: {
+    flex: 1,
+    color: '#53627a',
+    fontSize: 14,
+    fontWeight: '700',
   },
 
-  unavailableBox: {
-    backgroundColor: '#fee2e2',
+  price: {
+    marginTop: 10,
+    color: BLUE,
+    fontSize: 29,
+    fontWeight: '900',
+    letterSpacing: -0.4,
   },
 
-  availabilityDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 999,
+  priceUnavailable: {
+    color: '#c2413b',
+    fontSize: 24,
   },
 
-  availabilityText: {
-    fontSize: 12,
-    fontWeight: '800',
+  priceHint: {
+    marginTop: 3,
+    color: MUTED,
+    fontSize: 13,
+  },
+
+  trustCard: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    marginHorizontal: 16,
+    marginBottom: 14,
+    paddingVertical: 17,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 24,
+    backgroundColor: '#ffffff',
+    shadowColor: '#0b1f4d',
+    shadowOffset: {
+      width: 0,
+      height: 7,
+    },
+    shadowOpacity: 0.07,
+    shadowRadius: 15,
+    elevation: 4,
+  },
+
+  trustItem: {
+    flex: 1,
+    alignItems: 'center',
+    paddingHorizontal: 5,
+  },
+
+  trustDivider: {
+    width: 1,
+    marginVertical: 7,
+    backgroundColor: '#e8eef7',
+  },
+
+  trustIcon: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+  },
+
+  trustTitle: {
+    marginTop: 8,
+    color: TEXT,
+    fontSize: 11,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+
+  trustSubtitle: {
+    marginTop: 3,
+    color: MUTED,
+    fontSize: 10,
+    lineHeight: 13,
+    textAlign: 'center',
   },
 
   sectionCard: {
     marginHorizontal: 16,
-    marginBottom: 14,
+    marginTop: 12,
     padding: 18,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 18,
+    borderColor: BORDER,
+    borderRadius: 24,
     backgroundColor: '#ffffff',
-  },
-
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
+    shadowColor: '#0b1f4d',
+    shadowOffset: {
+      width: 0,
+      height: 7,
+    },
+    shadowOpacity: 0.06,
+    shadowRadius: 15,
+    elevation: 3,
   },
 
   sectionTitle: {
-    color: '#0f172a',
-    fontSize: 16,
-    fontWeight: '800',
+    color: TEXT,
+    fontSize: 19,
+    fontWeight: '900',
   },
 
   description: {
-    color: '#475569',
+    marginTop: 12,
+    color: '#53627a',
     fontSize: 14,
     lineHeight: 22,
   },
 
   informationRow: {
+    minHeight: 58,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 16,
+  },
+
+  informationIcon: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 11,
+    borderRadius: 11,
+    backgroundColor: '#edf4ff',
   },
 
   informationLabel: {
     flex: 1,
-    color: '#64748b',
-    fontSize: 13,
+    color: TEXT,
+    fontSize: 14,
+    fontWeight: '800',
   },
 
   informationValue: {
-    color: '#0f172a',
-    fontSize: 14,
-    fontWeight: '800',
+    maxWidth: '44%',
+    color: '#41516d',
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'right',
   },
 
   separator: {
     height: 1,
-    marginVertical: 13,
-    backgroundColor: '#e2e8f0',
+    marginLeft: 45,
+    backgroundColor: '#e8eef7',
   },
 
-  assistantButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+  adviceCard: {
     marginHorizontal: 16,
-    padding: 16,
-    borderRadius: 18,
-    backgroundColor: '#00687a',
-  },
-
-  assistantIcon: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 14,
-    backgroundColor: '#ffffff22',
-  },
-
-  assistantContent: {
-    flex: 1,
-  },
-
-  assistantTitle: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: '800',
-  },
-
-  assistantSubtitle: {
-    marginTop: 3,
-    color: '#dbeafe',
-    fontSize: 11,
-    lineHeight: 16,
-  },
-
-  bottomSpace: {
-    height: 10,
-  },
-
-  purchaseBar: {
-    flexDirection: 'row',
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingTop: 12,
-    paddingBottom: 14,
-    borderTopWidth: 1,
-    borderTopColor: '#e2e8f0',
+    marginTop: 12,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#dfe9ff',
+    borderRadius: 24,
     backgroundColor: '#ffffff',
+    shadowColor: '#0b1f4d',
+    shadowOffset: {
+      width: 0,
+      height: 7,
+    },
+    shadowOpacity: 0.06,
+    shadowRadius: 15,
+    elevation: 3,
   },
 
-  addButton: {
-    minWidth: 110,
+  adviceHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 7,
-    paddingHorizontal: 14,
-    borderWidth: 1,
-    borderColor: '#00236f',
-    borderRadius: 14,
   },
 
-  addButtonText: {
-    color: '#00236f',
-    fontSize: 13,
-    fontWeight: '800',
-  },
-
-  quantityControl: {
-    minWidth: 118,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    borderRadius: 14,
-  },
-
-  quantityButton: {
-    width: 38,
+  adviceAvatar: {
+    width: 48,
     height: 48,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#eff6ff',
+    borderRadius: 16,
+    backgroundColor: BLUE,
   },
 
-  disabledQuantityButton: {
-    backgroundColor: '#f1f5f9',
-  },
-
-  quantityValue: {
-    minWidth: 30,
-    color: '#0f172a',
-    fontSize: 15,
-    fontWeight: '900',
-    textAlign: 'center',
-  },
-
-  buyButton: {
-    minHeight: 50,
+  adviceHeaderText: {
     flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 7,
-    paddingHorizontal: 12,
-    borderRadius: 14,
-    backgroundColor: '#00236f',
+    marginLeft: 12,
   },
 
-  buyButtonText: {
-    color: '#ffffff',
-    fontSize: 13,
+  adviceTitle: {
+    color: TEXT,
+    fontSize: 17,
     fontWeight: '900',
   },
 
-  unavailableButton: {
-    minHeight: 50,
-    flex: 1,
+  adviceSubtitle: {
+    marginTop: 4,
+    color: MUTED,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+
+  adviceButton: {
+    minHeight: 48,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    borderRadius: 14,
-    backgroundColor: '#f1f5f9',
+    marginTop: 15,
+    borderRadius: 15,
+    backgroundColor: BLUE,
   },
 
-  unavailableButtonText: {
-    color: '#94a3b8',
+  adviceButtonText: {
+    color: '#ffffff',
     fontSize: 14,
+    fontWeight: '900',
+  },
+
+  purchasePanel: {
+    position: 'absolute',
+    left: 10,
+    right: 10,
+    bottom: 0,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    borderWidth: 1,
+    borderColor: '#dfe7f3',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: '#ffffff',
+    shadowColor: '#00184d',
+    shadowOffset: {
+      width: 0,
+      height: -7,
+    },
+    shadowOpacity: 0.11,
+    shadowRadius: 18,
+    elevation: 15,
+  },
+
+  quantityArea: {
+    width: 112,
+  },
+
+  quantityLabel: {
+    marginBottom: 7,
+    color: '#687892',
+    fontSize: 11,
     fontWeight: '800',
+  },
+
+  quantityControl: {
+    height: 49,
+    flexDirection: 'row',
+    alignItems: 'center',
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#dce5f1',
+    borderRadius: 14,
+    backgroundColor: '#ffffff',
+  },
+
+  quantityButton: {
+    width: 36,
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  quantityButtonDisabled: {
+    backgroundColor: '#f8fafc',
+  },
+
+  quantityValue: {
+    flex: 1,
+    color: TEXT,
+    fontSize: 16,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+
+  purchaseActions: {
+    flex: 1,
+    gap: 8,
+  },
+
+  addToCartButton: {
+    minHeight: 50,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 13,
+    borderRadius: 15,
+    backgroundColor: BLUE,
+  },
+
+  disabledPurchaseButton: {
+    backgroundColor: '#cbd5e1',
+  },
+
+  addToCartText: {
+    flex: 1,
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+
+  addToCartPrice: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+
+  buyNowButton: {
+    minHeight: 46,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    borderWidth: 1.5,
+    borderColor: BLUE,
+    borderRadius: 15,
+    backgroundColor: '#ffffff',
+  },
+
+  buyNowButtonDisabled: {
+    borderColor: '#cbd5e1',
+    backgroundColor: '#f8fafc',
+  },
+
+  buyNowText: {
+    color: BLUE,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+
+  buyNowTextDisabled: {
+    color: '#94a3b8',
   },
 })

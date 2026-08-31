@@ -47,7 +47,11 @@ class OrderViewSet(viewsets.GenericViewSet):
         user = self.request.user
         base = Order.objects.select_related(
             'customer', 'pharmacy', 'delivery_agent',
-        ).prefetch_related('items__medicine', 'prescription')
+        ).prefetch_related(
+            'items__medicine',
+            'prescription',
+            'delivery_incidents',
+        )
         if user.is_staff:
             return base
         if user.is_pharmacist:
@@ -246,6 +250,16 @@ class OrderViewSet(viewsets.GenericViewSet):
         """`GET /api/orders/{id}/messages/` — chat history fallback for clients
         that don't hold the websocket open."""
         order = get_object_or_404(self.get_queryset(), pk=pk)
+
+        if not (
+            request.user.is_staff
+            or order.customer_id == request.user.id
+            or order.delivery_agent_id == request.user.id
+        ):
+            raise PermissionDenied(
+                'Order chat is only available to the customer and assigned delivery agent.'
+            )
+
         qs = order.messages.select_related('sender').order_by('created_at')
         return Response(ChatMessageSerializer(qs, many=True).data)
 

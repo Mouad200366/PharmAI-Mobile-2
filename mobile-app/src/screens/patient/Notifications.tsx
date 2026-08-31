@@ -7,13 +7,13 @@ import {
   SectionList,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native'
 import type { CompositeScreenProps } from '@react-navigation/native'
 import { useFocusEffect } from '@react-navigation/native'
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs'
 import type { NativeStackScreenProps } from '@react-navigation/native-stack'
+import { LinearGradient } from 'expo-linear-gradient'
 
 import {
   getNotificationOrderId,
@@ -36,15 +36,29 @@ type Props = CompositeScreenProps<
 
 type FilterKey =
   | 'all'
-  | 'unread'
   | 'orders'
-  | 'prescriptions'
-  | 'payments'
   | 'delivery'
+  | 'assistant'
+  | 'payments'
 
 type NotificationSection = {
   title: string
   data: Notification[]
+}
+
+type Presentation = {
+  icon: string
+  iconColor: string
+  iconBackground: string
+  title: string
+  body: string
+  category: string
+  accent: string
+  softAccent: string
+  pillLabel: string
+  pillTextColor: string
+  pillBackground: string
+  actionLabel: string | null
 }
 
 const ORDER_TYPES: NotificationType[] = [
@@ -52,11 +66,6 @@ const ORDER_TYPES: NotificationType[] = [
   'order_status_changed',
   'order_delivered',
   'order_cancelled',
-]
-
-const PRESCRIPTION_TYPES: NotificationType[] = [
-  'prescription_approved',
-  'prescription_rejected',
 ]
 
 const PAYMENT_TYPES: NotificationType[] = [
@@ -70,6 +79,7 @@ const DELIVERY_STATUSES = new Set([
   'picked_up',
   'out_for_delivery',
   'delivered',
+  'failed',
 ])
 
 const FILTERS: {
@@ -77,12 +87,11 @@ const FILTERS: {
   label: string
   icon: string
 }[] = [
-  { key: 'all', label: 'Toutes', icon: 'notifications' },
-  { key: 'unread', label: 'Non lues', icon: 'mark_email_unread' },
-  { key: 'orders', label: 'Commandes', icon: 'local_mall' },
-  { key: 'prescriptions', label: 'Ordonnances', icon: 'description' },
-  { key: 'payments', label: 'Paiements', icon: 'payments' },
-  { key: 'delivery', label: 'Livraison', icon: 'two_wheeler' },
+  { key: 'all', label: 'Tout', icon: 'apps' },
+  { key: 'orders', label: 'Commandes', icon: 'inventory_2' },
+  { key: 'delivery', label: 'Livraison', icon: 'local_shipping' },
+  { key: 'assistant', label: 'PharmAgent', icon: 'auto_awesome' },
+  { key: 'payments', label: 'Paiement', icon: 'account_balance_wallet' },
 ]
 
 function isValidDate(date: Date) {
@@ -125,46 +134,34 @@ function sectionLabel(dateString: string) {
   })
 }
 
-function formatNotificationTime(dateString: string) {
+function formatCardTime(dateString: string) {
   const date = new Date(dateString)
 
   if (!isValidDate(date)) {
-    return ''
+    return 'Date inconnue'
   }
 
   const now = new Date()
-  const diffMs = now.getTime() - date.getTime()
-  const diffMinutes = Math.max(0, Math.floor(diffMs / 60_000))
-
-  if (diffMinutes < 1) {
-    return "À l'instant"
-  }
-
-  if (diffMinutes < 60) {
-    return `Il y a ${diffMinutes} min`
-  }
+  const time = date.toLocaleTimeString('fr-FR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 
   if (sameCalendarDay(date, now)) {
-    return date.toLocaleTimeString('fr-FR', {
-      hour: '2-digit',
-      minute: '2-digit',
-    })
+    return `Aujourd'hui · ${time}`
   }
 
   const yesterday = new Date(now)
   yesterday.setDate(now.getDate() - 1)
 
   if (sameCalendarDay(date, yesterday)) {
-    return `Hier, ${date.toLocaleTimeString('fr-FR', {
-      hour: '2-digit',
-      minute: '2-digit',
-    })}`
+    return `Hier · ${time}`
   }
 
-  return date.toLocaleDateString('fr-MA', {
+  return `${date.toLocaleDateString('fr-MA', {
     day: 'numeric',
     month: 'short',
-  })
+  })} · ${time}`
 }
 
 function matchesFilter(notification: Notification, filter: FilterKey) {
@@ -172,20 +169,19 @@ function matchesFilter(notification: Notification, filter: FilterKey) {
     return true
   }
 
-  if (filter === 'unread') {
-    return !notification.is_read
-  }
-
   if (filter === 'orders') {
-    return ORDER_TYPES.includes(notification.type)
-  }
+    if (notification.type === 'prescription_approved' || notification.type === 'prescription_rejected') {
+      return true
+    }
 
-  if (filter === 'prescriptions') {
-    return PRESCRIPTION_TYPES.includes(notification.type)
-  }
-
-  if (filter === 'payments') {
-    return PAYMENT_TYPES.includes(notification.type)
+    return (
+      ORDER_TYPES.includes(notification.type)
+      && !(
+        notification.type === 'order_status_changed'
+        && typeof notification.payload?.status === 'string'
+        && DELIVERY_STATUSES.has(notification.payload.status)
+      )
+    )
   }
 
   if (filter === 'delivery') {
@@ -200,10 +196,23 @@ function matchesFilter(notification: Notification, filter: FilterKey) {
     )
   }
 
+  if (filter === 'assistant') {
+    const combined = `${notification.title} ${notification.body}`.toLocaleLowerCase('fr')
+    return (
+      combined.includes('pharmagent')
+      || combined.includes('assistant')
+      || combined.includes('conseil')
+    )
+  }
+
+  if (filter === 'payments') {
+    return PAYMENT_TYPES.includes(notification.type)
+  }
+
   return true
 }
 
-function getNotificationPresentation(notification: Notification) {
+function getNotificationPresentation(notification: Notification): Presentation {
   const orderId = getNotificationOrderId(notification)
   const orderSuffix = orderId ? ` #${orderId}` : ''
   const status = typeof notification.payload?.status === 'string'
@@ -212,144 +221,232 @@ function getNotificationPresentation(notification: Notification) {
 
   if (notification.type === 'order_placed') {
     return {
-      icon: 'receipt_long',
-      color: colors.primary,
-      background: '#e8eefc',
+      icon: 'inventory_2',
+      iconColor: '#2563eb',
+      iconBackground: '#eef4ff',
+      title: `Commande reçue`,
+      body: `Votre commande${orderSuffix} a bien été enregistrée.`,
       category: 'Commande',
-      title: `Commande${orderSuffix} reçue`,
-      body: 'Votre commande a bien été enregistrée.',
+      accent: '#2563eb',
+      softAccent: '#eef4ff',
+      pillLabel: 'Commande',
+      pillTextColor: '#2563eb',
+      pillBackground: '#eef4ff',
+      actionLabel: orderId ? 'Commande' : null,
     }
   }
 
   if (notification.type === 'order_status_changed') {
-    const statusPresentation: Record<
-      string,
-      {
-        title: string
-        body: string
-        icon: string
-        color: string
-        background: string
-      }
-    > = {
+    const byStatus: Record<string, Presentation> = {
       accepted: {
-        title: `Commande${orderSuffix} acceptée`,
-        body: 'La pharmacie a accepté votre commande.',
-        icon: 'check_circle',
-        color: '#047857',
-        background: '#ecfdf5',
+        icon: 'inventory_2',
+        iconColor: '#2563eb',
+        iconBackground: '#eef4ff',
+        title: 'Commande acceptée',
+        body: `La pharmacie a accepté votre commande${orderSuffix} et prépare actuellement vos médicaments.`,
+        category: 'Commande',
+        accent: '#2563eb',
+        softAccent: '#eef4ff',
+        pillLabel: 'Commande',
+        pillTextColor: '#2563eb',
+        pillBackground: '#eef4ff',
+        actionLabel: orderId ? 'Commande' : null,
       },
       preparing: {
-        title: `Commande${orderSuffix} en préparation`,
-        body: 'La pharmacie prépare actuellement vos médicaments.',
         icon: 'inventory_2',
-        color: '#b45309',
-        background: '#fffbeb',
+        iconColor: '#2563eb',
+        iconBackground: '#eef4ff',
+        title: 'Commande en préparation',
+        body: `La pharmacie prépare actuellement votre commande${orderSuffix}.`,
+        category: 'Commande',
+        accent: '#2563eb',
+        softAccent: '#eef4ff',
+        pillLabel: 'Commande',
+        pillTextColor: '#2563eb',
+        pillBackground: '#eef4ff',
+        actionLabel: orderId ? 'Commande' : null,
       },
       ready_for_pickup: {
-        title: `Commande${orderSuffix} prête`,
-        body: 'Votre commande est prête à être prise en charge pour la livraison.',
-        icon: 'shopping_bag',
-        color: '#0369a1',
-        background: '#eff6ff',
+        icon: 'inventory_2',
+        iconColor: '#2563eb',
+        iconBackground: '#eef4ff',
+        title: 'Commande prête',
+        body: `Votre commande${orderSuffix} est prête à être prise en charge pour la livraison.`,
+        category: 'Livraison',
+        accent: '#2563eb',
+        softAccent: '#eef4ff',
+        pillLabel: 'Livraison',
+        pillTextColor: '#2563eb',
+        pillBackground: '#eef4ff',
+        actionLabel: orderId ? 'Suivre' : null,
       },
       awaiting_agent: {
-        title: `Recherche d'un livreur`,
-        body: `Nous recherchons un livreur pour la commande${orderSuffix}.`,
         icon: 'person_search',
-        color: '#0369a1',
-        background: '#eff6ff',
+        iconColor: '#2563eb',
+        iconBackground: '#eef4ff',
+        title: 'Recherche d’un livreur',
+        body: `Nous recherchons un livreur pour la commande${orderSuffix}.`,
+        category: 'Livraison',
+        accent: '#2563eb',
+        softAccent: '#eef4ff',
+        pillLabel: 'Livraison',
+        pillTextColor: '#2563eb',
+        pillBackground: '#eef4ff',
+        actionLabel: orderId ? 'Suivre' : null,
       },
       picked_up: {
-        title: `Commande${orderSuffix} récupérée`,
-        body: 'Le livreur a récupéré votre commande à la pharmacie.',
-        icon: 'two_wheeler',
-        color: '#0e7490',
-        background: '#ecfeff',
+        icon: 'local_shipping',
+        iconColor: '#2563eb',
+        iconBackground: '#eef4ff',
+        title: 'Livreur en route',
+        body: `Votre commande${orderSuffix} a été récupérée et est en cours de livraison.`,
+        category: 'Livraison',
+        accent: '#2563eb',
+        softAccent: '#eef4ff',
+        pillLabel: 'Suivi',
+        pillTextColor: '#2563eb',
+        pillBackground: '#eef4ff',
+        actionLabel: orderId ? 'Suivre' : null,
       },
       out_for_delivery: {
-        title: `Commande${orderSuffix} en livraison`,
-        body: 'Votre commande est en route vers votre adresse.',
-        icon: 'two_wheeler',
-        color: '#0e7490',
-        background: '#ecfeff',
+        icon: 'local_shipping',
+        iconColor: '#2563eb',
+        iconBackground: '#eef4ff',
+        title: 'Livreur en route',
+        body: `Votre commande${orderSuffix} est en cours de livraison. Suivez la position du livreur en temps réel.`,
+        category: 'Livraison',
+        accent: '#2563eb',
+        softAccent: '#eef4ff',
+        pillLabel: 'Suivi',
+        pillTextColor: '#2563eb',
+        pillBackground: '#eef4ff',
+        actionLabel: orderId ? 'Suivre' : null,
+      },
+      delivered: {
+        icon: 'verified_user',
+        iconColor: '#16a34a',
+        iconBackground: '#eefbf1',
+        title: 'Commande livrée',
+        body: `Votre commande${orderSuffix} a été livrée avec succès.`,
+        category: 'Livraison',
+        accent: '#16a34a',
+        softAccent: '#eefbf1',
+        pillLabel: 'Livrée',
+        pillTextColor: '#16a34a',
+        pillBackground: '#e8f7ec',
+        actionLabel: null,
+      },
+      failed: {
+        icon: 'assignment_late',
+        iconColor: '#5b5ce2',
+        iconBackground: '#f1efff',
+        title: 'Retour traité',
+        body: `Le retour de votre commande${orderSuffix} a bien été enregistré par la pharmacie.`,
+        category: 'Information',
+        accent: '#5b5ce2',
+        softAccent: '#f1efff',
+        pillLabel: 'Information',
+        pillTextColor: '#667085',
+        pillBackground: '#f3f4fa',
+        actionLabel: null,
       },
       rejected: {
-        title: `Commande${orderSuffix} refusée`,
-        body: notification.body || 'La commande ne peut pas être préparée.',
         icon: 'cancel',
-        color: colors.error,
-        background: colors.errorBg,
+        iconColor: colors.error,
+        iconBackground: colors.errorBg,
+        title: 'Commande refusée',
+        body: notification.body || `La commande${orderSuffix} ne peut pas être préparée.`,
+        category: 'Commande',
+        accent: colors.error,
+        softAccent: colors.errorBg,
+        pillLabel: 'Commande',
+        pillTextColor: colors.error,
+        pillBackground: '#fee2e2',
+        actionLabel: orderId ? 'Commande' : null,
       },
     }
 
-    const presentation = status ? statusPresentation[status] : undefined
-
-    if (presentation) {
-      return {
-        ...presentation,
-        category: DELIVERY_STATUSES.has(status ?? '')
-          ? 'Livraison'
-          : 'Commande',
-      }
-    }
-
-    return {
-      icon: 'update',
-      color: colors.primary,
-      background: '#e8eefc',
-      category: 'Commande',
-      title: notification.title || `Mise à jour de la commande${orderSuffix}`,
+    return byStatus[status ?? ''] ?? {
+      icon: 'notifications',
+      iconColor: '#2563eb',
+      iconBackground: '#eef4ff',
+      title: notification.title || 'Mise à jour de commande',
       body: notification.body || 'Le statut de votre commande a été mis à jour.',
+      category: 'Commande',
+      accent: '#2563eb',
+      softAccent: '#eef4ff',
+      pillLabel: 'Commande',
+      pillTextColor: '#2563eb',
+      pillBackground: '#eef4ff',
+      actionLabel: orderId ? 'Commande' : null,
     }
   }
 
   if (notification.type === 'order_delivered') {
     return {
-      icon: 'task_alt',
-      color: '#047857',
-      background: '#ecfdf5',
+      icon: 'verified_user',
+      iconColor: '#16a34a',
+      iconBackground: '#eefbf1',
+      title: 'Commande livrée',
+      body: `Votre commande${orderSuffix} a été livrée avec succès.`,
       category: 'Livraison',
-      title: `Commande${orderSuffix} livrée`,
-      body: 'Votre commande a été livrée.',
+      accent: '#16a34a',
+      softAccent: '#eefbf1',
+      pillLabel: 'Livrée',
+      pillTextColor: '#16a34a',
+      pillBackground: '#e8f7ec',
+      actionLabel: null,
     }
   }
 
   if (notification.type === 'order_cancelled') {
     return {
       icon: 'cancel',
-      color: colors.error,
-      background: colors.errorBg,
+      iconColor: colors.error,
+      iconBackground: colors.errorBg,
+      title: 'Commande annulée',
+      body: notification.body || `Votre commande${orderSuffix} a été annulée.`,
       category: 'Commande',
-      title: `Commande${orderSuffix} annulée`,
-      body: notification.body || 'Votre commande a été annulée.',
+      accent: colors.error,
+      softAccent: colors.errorBg,
+      pillLabel: 'Commande',
+      pillTextColor: colors.error,
+      pillBackground: '#fee2e2',
+      actionLabel: orderId ? 'Commande' : null,
     }
   }
 
   if (notification.type === 'prescription_approved') {
     return {
-      icon: 'fact_check',
-      color: '#047857',
-      background: '#ecfdf5',
-      category: 'Ordonnance',
+      icon: 'description',
+      iconColor: '#2563eb',
+      iconBackground: '#eef4ff',
       title: 'Ordonnance validée',
-      body: `L'ordonnance de la commande${orderSuffix} a été approuvée.`,
+      body: `L’ordonnance de la commande${orderSuffix} a été approuvée.`,
+      category: 'Commande',
+      accent: '#2563eb',
+      softAccent: '#eef4ff',
+      pillLabel: 'Commande',
+      pillTextColor: '#2563eb',
+      pillBackground: '#eef4ff',
+      actionLabel: orderId ? 'Commande' : null,
     }
   }
 
   if (notification.type === 'prescription_rejected') {
-    const rejectionBody = notification.body
-      && notification.body !== 'Your prescription could not be approved.'
-      ? notification.body
-      : "L'ordonnance n'a pas pu être validée."
-
     return {
       icon: 'report',
-      color: colors.error,
-      background: colors.errorBg,
-      category: 'Ordonnance',
+      iconColor: colors.error,
+      iconBackground: colors.errorBg,
       title: 'Ordonnance refusée',
-      body: rejectionBody,
+      body: notification.body || "L’ordonnance n’a pas pu être validée.",
+      category: 'Commande',
+      accent: colors.error,
+      softAccent: colors.errorBg,
+      pillLabel: 'Commande',
+      pillTextColor: colors.error,
+      pillBackground: '#fee2e2',
+      actionLabel: orderId ? 'Commande' : null,
     }
   }
 
@@ -360,45 +457,86 @@ function getNotificationPresentation(notification: Notification) {
 
     return {
       icon: 'payments',
-      color: '#047857',
-      background: '#ecfdf5',
-      category: 'Paiement',
+      iconColor: '#0f766e',
+      iconBackground: '#ecfeff',
       title: 'Paiement confirmé',
       body: amount
         ? `Le paiement de ${amount} MAD pour la commande${orderSuffix} a été confirmé.`
         : `Le paiement de la commande${orderSuffix} a été confirmé.`,
+      category: 'Paiement',
+      accent: '#0f766e',
+      softAccent: '#ecfeff',
+      pillLabel: 'Paiement',
+      pillTextColor: '#0f766e',
+      pillBackground: '#def7f7',
+      actionLabel: null,
     }
   }
 
   if (notification.type === 'payment_failed') {
     return {
       icon: 'credit_card_off',
-      color: colors.error,
-      background: colors.errorBg,
-      category: 'Paiement',
+      iconColor: colors.error,
+      iconBackground: colors.errorBg,
       title: 'Paiement échoué',
-      body: `Le paiement de la commande${orderSuffix} n'a pas pu être traité.`,
+      body: `Le paiement de la commande${orderSuffix} n’a pas pu être traité.`,
+      category: 'Paiement',
+      accent: colors.error,
+      softAccent: colors.errorBg,
+      pillLabel: 'Paiement',
+      pillTextColor: colors.error,
+      pillBackground: '#fee2e2',
+      actionLabel: null,
     }
   }
 
   if (notification.type === 'agent_assigned') {
     return {
-      icon: 'two_wheeler',
-      color: '#0e7490',
-      background: '#ecfeff',
-      category: 'Livraison',
+      icon: 'local_shipping',
+      iconColor: '#2563eb',
+      iconBackground: '#eef4ff',
       title: 'Livreur assigné',
       body: `Un livreur a été assigné à la commande${orderSuffix}.`,
+      category: 'Livraison',
+      accent: '#2563eb',
+      softAccent: '#eef4ff',
+      pillLabel: 'Livraison',
+      pillTextColor: '#2563eb',
+      pillBackground: '#eef4ff',
+      actionLabel: orderId ? 'Suivre' : null,
+    }
+  }
+
+  if (notification.type === 'delivery_offer_available') {
+    return {
+      icon: 'notifications',
+      iconColor: '#2563eb',
+      iconBackground: '#eef4ff',
+      title: notification.title || 'Mise à jour disponible',
+      body: notification.body || 'Une nouvelle mise à jour est disponible.',
+      category: 'Information',
+      accent: '#2563eb',
+      softAccent: '#eef4ff',
+      pillLabel: 'Information',
+      pillTextColor: '#667085',
+      pillBackground: '#f3f4fa',
+      actionLabel: null,
     }
   }
 
   return {
     icon: 'notifications',
-    color: colors.textSecondary,
-    background: '#f3f4f6',
-    category: 'Notification',
+    iconColor: colors.primary,
+    iconBackground: '#eef4ff',
     title: notification.title || 'Notification',
     body: notification.body || '',
+    category: 'Information',
+    accent: colors.primary,
+    softAccent: '#eef4ff',
+    pillLabel: 'Information',
+    pillTextColor: '#667085',
+    pillBackground: '#f3f4fa',
+    actionLabel: null,
   }
 }
 
@@ -424,10 +562,7 @@ export default function Notifications({ navigation }: Props) {
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [totalCount, setTotalCount] = useState(0)
   const [unreadCount, setUnreadCount] = useState(0)
-
   const [filter, setFilter] = useState<FilterKey>('all')
-  const [search, setSearch] = useState('')
-
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [markingAll, setMarkingAll] = useState(false)
@@ -467,35 +602,10 @@ export default function Notifications({ navigation }: Props) {
     }, [loadNotifications]),
   )
 
-  const readCount = Math.max(0, totalCount - unreadCount)
-
-  const filteredNotifications = useMemo(() => {
-    const normalizedSearch = search.trim().toLocaleLowerCase('fr')
-
-    return notifications.filter((notification) => {
-      if (!matchesFilter(notification, filter)) {
-        return false
-      }
-
-      if (!normalizedSearch) {
-        return true
-      }
-
-      const presentation = getNotificationPresentation(notification)
-      const searchableText = [
-        presentation.title,
-        presentation.body,
-        presentation.category,
-        notification.title,
-        notification.body,
-        String(getNotificationOrderId(notification) ?? ''),
-      ]
-        .join(' ')
-        .toLocaleLowerCase('fr')
-
-      return searchableText.includes(normalizedSearch)
-    })
-  }, [filter, notifications, search])
+  const filteredNotifications = useMemo(
+    () => notifications.filter((notification) => matchesFilter(notification, filter)),
+    [filter, notifications],
+  )
 
   const sections = useMemo(
     () => groupNotifications(filteredNotifications),
@@ -508,15 +618,9 @@ export default function Notifications({ navigation }: Props) {
         return totalCount
       }
 
-      if (key === 'unread') {
-        return unreadCount
-      }
-
-      return notifications.filter((notification) =>
-        matchesFilter(notification, key),
-      ).length
+      return notifications.filter((notification) => matchesFilter(notification, key)).length
     },
-    [notifications, totalCount, unreadCount],
+    [notifications, totalCount],
   )
 
   async function handleRefresh() {
@@ -534,7 +638,6 @@ export default function Notifications({ navigation }: Props) {
 
     try {
       await notificationsApi.markAllRead()
-
       const now = new Date().toISOString()
 
       setNotifications((current) =>
@@ -561,11 +664,7 @@ export default function Notifications({ navigation }: Props) {
     const response = await notificationsApi.markRead(notification.id)
 
     setNotifications((current) =>
-      current.map((item) =>
-        item.id === notification.id
-          ? response.data
-          : item,
-      ),
+      current.map((item) => (item.id === notification.id ? response.data : item)),
     )
     setUnreadCount((current) => Math.max(0, current - 1))
   }
@@ -582,7 +681,6 @@ export default function Notifications({ navigation }: Props) {
       setError(null)
 
       const orderId = getNotificationOrderId(notification)
-
       if (orderId) {
         navigation.navigate('OrderDetail', { id: orderId })
       }
@@ -597,9 +695,7 @@ export default function Notifications({ navigation }: Props) {
     return (
       <View style={styles.centerScreen}>
         <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={styles.loadingText}>
-          Chargement de vos notifications…
-        </Text>
+        <Text style={styles.loadingText}>Chargement de vos notifications…</Text>
       </View>
     )
   }
@@ -610,19 +706,9 @@ export default function Notifications({ navigation }: Props) {
         <View style={styles.errorIcon}>
           <Icon name="cloud_off" size={28} color={colors.error} />
         </View>
-
-        <Text style={styles.errorTitle}>
-          Impossible de charger les notifications
-        </Text>
-
-        <Text style={styles.errorDescription}>
-          {error}
-        </Text>
-
-        <Pressable
-          style={styles.retryButton}
-          onPress={() => void loadNotifications(true)}
-        >
+        <Text style={styles.errorTitle}>Impossible de charger les notifications</Text>
+        <Text style={styles.errorDescription}>{error}</Text>
+        <Pressable style={styles.retryButton} onPress={() => void loadNotifications(true)}>
           <Icon name="refresh" size={18} color={colors.white} />
           <Text style={styles.retryButtonText}>Réessayer</Text>
         </Pressable>
@@ -638,6 +724,7 @@ export default function Notifications({ navigation }: Props) {
       keyExtractor={(item) => String(item.id)}
       stickySectionHeadersEnabled={false}
       keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
@@ -647,125 +734,63 @@ export default function Notifications({ navigation }: Props) {
         />
       }
       ListHeaderComponent={
-        <View style={styles.headerContent}>
-          <View style={styles.headerRow}>
-            <View style={styles.headerText}>
-              <Text style={styles.title}>Notifications</Text>
-              <Text style={styles.subtitle}>
-                Suivez vos commandes, ordonnances et livraisons.
+        <View style={styles.headerWrap}>
+          <LinearGradient
+            colors={['#08248f', '#1558ff', '#1dcde0']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.heroCard}
+          >
+            <View style={styles.heroTextBlock}>
+              <Text style={styles.heroEyebrow}>CENTRE DE NOTIFICATIONS</Text>
+              <Text style={styles.heroTitle}>Notifications</Text>
+              <Text style={styles.heroSubtitle}>
+                Suivez vos commandes, vos livraisons et les mises à jour importantes en temps réel.
               </Text>
             </View>
 
-            <View
-              style={[
-                styles.unreadHeaderBadge,
-                unreadCount === 0 && styles.unreadHeaderBadgeEmpty,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.unreadHeaderBadgeValue,
-                  unreadCount === 0 && styles.unreadHeaderBadgeValueEmpty,
-                ]}
-              >
-                {unreadCount}
-              </Text>
-              <Text
-                style={[
-                  styles.unreadHeaderBadgeLabel,
-                  unreadCount === 0 && styles.unreadHeaderBadgeLabelEmpty,
-                ]}
-              >
-                non lue{unreadCount !== 1 ? 's' : ''}
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.statsRow}>
-            <StatCard
-              icon="notifications"
-              label="Total"
-              value={totalCount}
-              iconColor={colors.primary}
-              iconBackground="#e8eefc"
-            />
-            <StatCard
-              icon="mark_email_unread"
-              label="Non lues"
-              value={unreadCount}
-              iconColor="#0e7490"
-              iconBackground="#ecfeff"
-            />
-            <StatCard
-              icon="drafts"
-              label="Lues"
-              value={readCount}
-              iconColor="#047857"
-              iconBackground="#ecfdf5"
-            />
-          </View>
-
-          <View style={styles.actionRow}>
-            <View style={styles.searchBox}>
-              <Icon name="search" size={19} color={colors.textMuted} />
-              <TextInput
-                value={search}
-                onChangeText={setSearch}
-                placeholder="Rechercher une notification…"
-                placeholderTextColor={colors.textMuted}
-                style={styles.searchInput}
-                returnKeyType="search"
-              />
-
-              {search.length > 0 ? (
-                <Pressable
-                  style={styles.clearSearchButton}
-                  onPress={() => setSearch('')}
-                  hitSlop={8}
-                >
-                  <Icon
-                    name="close"
-                    size={17}
-                    color={colors.textMuted}
-                  />
-                </Pressable>
+            <View style={styles.heroBellCard}>
+              <Icon name="notifications_none" size={34} color="#1f4fff" />
+              {unreadCount > 0 ? (
+                <View style={styles.heroCountBadge}>
+                  <Text style={styles.heroCountBadgeText}>{unreadCount}</Text>
+                </View>
               ) : null}
             </View>
+          </LinearGradient>
+
+          <View style={styles.summaryCard}>
+            <View style={styles.summaryCountBlock}>
+              <Text style={styles.summaryCountValue}>{unreadCount}</Text>
+              <Text style={styles.summaryCountLabel}>non lue{unreadCount !== 1 ? 's' : ''}</Text>
+            </View>
+
+            <View style={styles.summaryDivider} />
 
             <Pressable
               style={[
-                styles.markAllButton,
-                (unreadCount === 0 || markingAll)
-                  && styles.markAllButtonDisabled,
+                styles.markAllLargeButton,
+                (unreadCount === 0 || markingAll) && styles.markAllLargeButtonDisabled,
               ]}
               disabled={unreadCount === 0 || markingAll}
               onPress={() => void handleMarkAllRead()}
             >
               {markingAll ? (
-                <ActivityIndicator
-                  size="small"
-                  color={colors.primary}
-                />
+                <ActivityIndicator size="small" color="#1f4fff" />
               ) : (
                 <Icon
-                  name="done_all"
+                  name="check_circle_outline"
                   size={18}
-                  color={
-                    unreadCount === 0
-                      ? colors.textMuted
-                      : colors.primary
-                  }
+                  color={unreadCount === 0 ? '#a0a6b5' : '#1f4fff'}
                 />
               )}
-
               <Text
                 style={[
-                  styles.markAllButtonText,
-                  unreadCount === 0
-                    && styles.markAllButtonTextDisabled,
+                  styles.markAllLargeButtonText,
+                  (unreadCount === 0 || markingAll) && styles.markAllLargeButtonTextDisabled,
                 ]}
               >
-                Tout lire
+                Tout marquer comme lu
               </Text>
             </Pressable>
           </View>
@@ -773,7 +798,7 @@ export default function Notifications({ navigation }: Props) {
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.filtersContent}
+            contentContainerStyle={styles.filterRow}
           >
             {FILTERS.map((item) => {
               const active = filter === item.key
@@ -782,42 +807,23 @@ export default function Notifications({ navigation }: Props) {
               return (
                 <Pressable
                   key={item.key}
-                  style={[
-                    styles.filterButton,
-                    active && styles.filterButtonActive,
-                  ]}
+                  style={[styles.filterChip, active && styles.filterChipActive]}
                   onPress={() => setFilter(item.key)}
                 >
                   <Icon
                     name={item.icon}
-                    size={16}
-                    color={
-                      active
-                        ? colors.white
-                        : colors.textSecondary
-                    }
+                    size={17}
+                    color={active ? colors.white : '#5c6478'}
                   />
-
-                  <Text
-                    style={[
-                      styles.filterButtonText,
-                      active && styles.filterButtonTextActive,
-                    ]}
-                  >
+                  <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
                     {item.label}
                   </Text>
-
                   {count > 0 ? (
-                    <View
-                      style={[
-                        styles.filterCount,
-                        active && styles.filterCountActive,
-                      ]}
-                    >
+                    <View style={[styles.filterChipCount, active && styles.filterChipCountActive]}>
                       <Text
                         style={[
-                          styles.filterCountText,
-                          active && styles.filterCountTextActive,
+                          styles.filterChipCountText,
+                          active && styles.filterChipCountTextActive,
                         ]}
                       >
                         {count}
@@ -831,11 +837,7 @@ export default function Notifications({ navigation }: Props) {
 
           {error ? (
             <View style={styles.inlineError}>
-              <Icon
-                name="error_outline"
-                size={18}
-                color={colors.error}
-              />
+              <Icon name="error_outline" size={18} color={colors.error} />
               <Text style={styles.inlineErrorText}>{error}</Text>
               <Pressable
                 onPress={() => {
@@ -847,24 +849,9 @@ export default function Notifications({ navigation }: Props) {
               </Pressable>
             </View>
           ) : null}
-
-          <View style={styles.listIntroRow}>
-            <Text style={styles.listIntroTitle}>
-              {filter === 'all'
-                ? 'Toutes les notifications'
-                : FILTERS.find((item) => item.key === filter)?.label}
-            </Text>
-            <Text style={styles.listIntroCount}>
-              {filteredNotifications.length}
-            </Text>
-          </View>
         </View>
       }
-      renderSectionHeader={({ section }) => (
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionHeaderText}>{section.title}</Text>
-        </View>
-      )}
+      renderSectionHeader={() => null}
       renderItem={({ item }) => (
         <NotificationCard
           notification={item}
@@ -872,71 +859,11 @@ export default function Notifications({ navigation }: Props) {
           onPress={() => void handleNotificationPress(item)}
         />
       )}
-      ItemSeparatorComponent={() => (
-        <View style={styles.itemSeparator} />
-      )}
-      SectionSeparatorComponent={() => (
-        <View style={styles.sectionSeparator} />
-      )}
-      ListEmptyComponent={
-        <EmptyState
-          hasSearch={search.trim().length > 0}
-          filter={filter}
-          onClear={() => {
-            setSearch('')
-            setFilter('all')
-          }}
-        />
-      }
-      ListFooterComponent={
-        notifications.length > 0 ? (
-          <View style={styles.footerNote}>
-            <Icon
-              name="info_outline"
-              size={17}
-              color={colors.textMuted}
-            />
-            <Text style={styles.footerNoteText}>
-              Les notifications liées à une commande ouvrent directement
-              son suivi détaillé.
-            </Text>
-          </View>
-        ) : null
-      }
-      showsVerticalScrollIndicator={false}
+      ItemSeparatorComponent={() => <View style={styles.itemSeparator} />}
+      SectionSeparatorComponent={() => <View style={styles.sectionSeparator} />}
+      ListEmptyComponent={<EmptyState filter={filter} />}
+      ListFooterComponent={<View style={styles.footerSpacer} />}
     />
-  )
-}
-
-function StatCard({
-  icon,
-  label,
-  value,
-  iconColor,
-  iconBackground,
-}: {
-  icon: string
-  label: string
-  value: number
-  iconColor: string
-  iconBackground: string
-}) {
-  return (
-    <View style={styles.statCard}>
-      <View
-        style={[
-          styles.statIcon,
-          { backgroundColor: iconBackground },
-        ]}
-      >
-        <Icon name={icon} size={18} color={iconColor} />
-      </View>
-
-      <View>
-        <Text style={styles.statValue}>{value}</Text>
-        <Text style={styles.statLabel}>{label}</Text>
-      </View>
-    </View>
   )
 }
 
@@ -951,144 +878,62 @@ function NotificationCard({
 }) {
   const presentation = getNotificationPresentation(notification)
   const orderId = getNotificationOrderId(notification)
+  const showReadLabel = notification.is_read && !opening
 
   return (
     <Pressable
-      style={({ pressed }) => [
-        styles.notificationCard,
-        !notification.is_read && styles.notificationCardUnread,
-        pressed && styles.notificationCardPressed,
-      ]}
+      style={({ pressed }) => [styles.notificationCard, pressed && styles.notificationCardPressed]}
       onPress={onPress}
       disabled={opening}
     >
-      <View
-        style={[
-          styles.notificationIcon,
-          { backgroundColor: presentation.background },
-        ]}
-      >
-        <Icon
-          name={presentation.icon}
-          size={22}
-          color={presentation.color}
-        />
+      {!notification.is_read ? <View style={styles.cardUnreadDot} /> : null}
+
+      <View style={[styles.cardIconWrap, { backgroundColor: presentation.iconBackground }]}>
+        <Icon name={presentation.icon} size={25} color={presentation.iconColor} />
       </View>
 
-      <View style={styles.notificationContent}>
-        <View style={styles.notificationMetaRow}>
-          <View style={styles.notificationCategoryRow}>
-            {!notification.is_read ? (
-              <View style={styles.unreadDot} />
-            ) : null}
-
-            <Text style={styles.notificationCategory}>
-              {presentation.category}
-            </Text>
-          </View>
-
-          <Text style={styles.notificationTime}>
-            {formatNotificationTime(notification.created_at)}
-          </Text>
-        </View>
-
-        <Text
-          style={[
-            styles.notificationTitle,
-            !notification.is_read
-              && styles.notificationTitleUnread,
-          ]}
-        >
-          {presentation.title}
-        </Text>
-
-        {presentation.body ? (
-          <Text
-            style={styles.notificationBody}
-            numberOfLines={3}
-          >
-            {presentation.body}
-          </Text>
-        ) : null}
-
-        {orderId ? (
-          <View style={styles.notificationAction}>
-            <Text style={styles.notificationActionText}>
-              Voir la commande #{orderId}
-            </Text>
-            <Icon
-              name="arrow_forward"
-              size={15}
-              color={colors.primary}
-            />
-          </View>
-        ) : null}
+      <View style={styles.cardBody}>
+        <Text style={styles.cardTitle}>{presentation.title}</Text>
+        <Text style={styles.cardText}>{presentation.body}</Text>
+        <Text style={styles.cardTime}>{formatCardTime(notification.created_at)}</Text>
       </View>
 
-      {opening ? (
-        <ActivityIndicator
-          size="small"
-          color={colors.primary}
-        />
-      ) : orderId ? (
-        <Icon
-          name="chevron_right"
-          size={22}
-          color={colors.textMuted}
-        />
-      ) : null}
+      <View style={styles.cardRightColumn}>
+        {opening ? (
+          <ActivityIndicator size="small" color={colors.primary} />
+        ) : presentation.actionLabel ? (
+          <View style={[styles.cardPill, { backgroundColor: presentation.pillBackground }]}>
+            <Text style={[styles.cardPillText, { color: presentation.pillTextColor }]}>
+              {presentation.actionLabel}
+            </Text>
+          </View>
+        ) : null}
+
+        {showReadLabel ? (
+          <View style={styles.readStateRow}>
+            <Icon name="done" size={16} color="#98a2b3" />
+            <Text style={styles.readStateText}>Lu</Text>
+          </View>
+        ) : orderId ? (
+          <Text style={styles.hiddenOrderLink}>Commande #{orderId}</Text>
+        ) : null}
+      </View>
     </Pressable>
   )
 }
 
-function EmptyState({
-  hasSearch,
-  filter,
-  onClear,
-}: {
-  hasSearch: boolean
-  filter: FilterKey
-  onClear: () => void
-}) {
-  const isDefaultEmpty = !hasSearch && filter === 'all'
+function EmptyState({ filter }: { filter: FilterKey }) {
+  const activeLabel = FILTERS.find((item) => item.key === filter)?.label ?? 'notifications'
 
   return (
     <View style={styles.emptyState}>
-      <View style={styles.emptyIcon}>
-        <Icon
-          name={
-            isDefaultEmpty
-              ? 'notifications_none'
-              : 'filter_alt_off'
-          }
-          size={30}
-          color={colors.primary}
-        />
+      <View style={styles.emptyStateIcon}>
+        <Icon name="notifications_none" size={30} color={colors.primary} />
       </View>
-
-      <Text style={styles.emptyTitle}>
-        {isDefaultEmpty
-          ? 'Aucune notification pour le moment'
-          : 'Aucun résultat'}
+      <Text style={styles.emptyStateTitle}>Aucune notification</Text>
+      <Text style={styles.emptyStateText}>
+        Il n’y a aucune notification dans la section « {activeLabel} » pour le moment.
       </Text>
-
-      <Text style={styles.emptyDescription}>
-        {isDefaultEmpty
-          ? 'Les mises à jour de vos commandes apparaîtront ici.'
-          : 'Aucune notification ne correspond à votre recherche ou à ce filtre.'}
-      </Text>
-
-      {!isDefaultEmpty ? (
-        <Pressable
-          style={styles.emptyButton}
-          onPress={onClear}
-        >
-          <Icon name="restart_alt" size={17} color={colors.primary} />
-          <Text style={styles.emptyButtonText}>
-            Réinitialiser les filtres
-          </Text>
-        </Pressable>
-      ) : null}
     </View>
   )
 }
@@ -1096,451 +941,410 @@ function EmptyState({
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: colors.surface,
+    backgroundColor: '#f2f5fb',
   },
   content: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 32,
+    paddingBottom: 28,
     flexGrow: 1,
   },
   centerScreen: {
     flex: 1,
-    alignItems: 'center',
     justifyContent: 'center',
-    gap: 12,
+    alignItems: 'center',
     paddingHorizontal: 28,
-    backgroundColor: colors.surface,
+    backgroundColor: '#f2f5fb',
   },
   loadingText: {
-    fontSize: 13,
+    marginTop: 12,
+    fontSize: 14,
     color: colors.textSecondary,
   },
   errorIcon: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.errorBg,
   },
   errorTitle: {
-    marginTop: 3,
-    fontSize: 17,
-    fontWeight: '700',
+    marginTop: 12,
+    fontSize: 18,
+    fontWeight: '800',
     color: colors.textPrimary,
     textAlign: 'center',
   },
   errorDescription: {
-    fontSize: 13,
-    lineHeight: 19,
+    marginTop: 6,
+    fontSize: 14,
+    lineHeight: 20,
     color: colors.textSecondary,
     textAlign: 'center',
   },
   retryButton: {
-    marginTop: 5,
-    minHeight: 44,
+    marginTop: 18,
+    minHeight: 46,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 7,
+    gap: 8,
     paddingHorizontal: 18,
-    borderRadius: 12,
+    borderRadius: 14,
     backgroundColor: colors.primary,
   },
   retryButtonText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
     color: colors.white,
   },
-  headerContent: {
-    gap: 14,
-    marginBottom: 16,
+  headerWrap: {
+    paddingBottom: 10,
   },
-  headerRow: {
+  heroCard: {
+    minHeight: 222,
+    borderBottomLeftRadius: 34,
+    borderBottomRightRadius: 34,
+    paddingTop: 24,
+    paddingHorizontal: 20,
+    paddingBottom: 24,
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     gap: 12,
   },
-  headerText: {
+  heroTextBlock: {
     flex: 1,
-    gap: 3,
+    paddingTop: 10,
   },
-  title: {
-    fontSize: 25,
+  heroEyebrow: {
+    fontSize: 11,
+    lineHeight: 14,
     fontWeight: '800',
-    color: colors.primary,
+    letterSpacing: 0.8,
+    color: '#3ae6f0',
   },
-  subtitle: {
-    fontSize: 12,
-    lineHeight: 17,
-    color: colors.textSecondary,
-  },
-  unreadHeaderBadge: {
-    minWidth: 68,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 13,
-    backgroundColor: '#ecfeff',
-    borderWidth: 1,
-    borderColor: '#a5f3fc',
-  },
-  unreadHeaderBadgeEmpty: {
-    backgroundColor: '#f9fafb',
-    borderColor: colors.outlineVariant,
-  },
-  unreadHeaderBadgeValue: {
-    fontSize: 17,
+  heroTitle: {
+    marginTop: 8,
+    fontSize: 34,
+    lineHeight: 39,
     fontWeight: '800',
-    color: '#0e7490',
+    color: '#ffffff',
   },
-  unreadHeaderBadgeValueEmpty: {
-    color: colors.textMuted,
-  },
-  unreadHeaderBadgeLabel: {
-    marginTop: 1,
-    fontSize: 9,
-    fontWeight: '600',
-    color: '#0e7490',
-  },
-  unreadHeaderBadgeLabelEmpty: {
-    color: colors.textMuted,
-  },
-  statsRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  statCard: {
-    flex: 1,
-    minHeight: 67,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 9,
-    paddingVertical: 10,
-    borderRadius: 13,
-    borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    backgroundColor: colors.surfaceLowest,
-  },
-  statIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 11,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  statValue: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: colors.textPrimary,
-  },
-  statLabel: {
-    marginTop: 1,
-    fontSize: 9,
-    color: colors.textMuted,
-  },
-  actionRow: {
-    gap: 9,
-  },
-  searchBox: {
-    minHeight: 47,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 13,
-    borderRadius: 13,
-    borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    backgroundColor: colors.surfaceLowest,
-  },
-  searchInput: {
-    flex: 1,
-    paddingVertical: 10,
+  heroSubtitle: {
+    marginTop: 10,
     fontSize: 13,
-    color: colors.textPrimary,
+    lineHeight: 19,
+    color: 'rgba(255,255,255,0.96)',
+    maxWidth: 270,
   },
-  clearSearchButton: {
-    width: 28,
-    height: 28,
+  heroBellCard: {
+    width: 86,
+    height: 86,
+    borderRadius: 23,
+    backgroundColor: '#ffffff',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#001957',
+    shadowOpacity: 0.16,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 8,
   },
-  markAllButton: {
-    alignSelf: 'flex-end',
-    minHeight: 36,
-    flexDirection: 'row',
+  heroCountBadge: {
+    position: 'absolute',
+    top: -7,
+    right: -7,
+    minWidth: 30,
+    height: 30,
+    borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    paddingHorizontal: 11,
-    borderRadius: 10,
-    backgroundColor: '#eef3ff',
+    paddingHorizontal: 7,
+    backgroundColor: '#ff2147',
+    borderWidth: 2,
+    borderColor: '#ffffff',
   },
-  markAllButtonDisabled: {
-    backgroundColor: '#f3f4f6',
-  },
-  markAllButtonText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.primary,
-  },
-  markAllButtonTextDisabled: {
-    color: colors.textMuted,
-  },
-  filtersContent: {
-    gap: 8,
-    paddingRight: 6,
-  },
-  filterButton: {
-    minHeight: 37,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 11,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    backgroundColor: colors.surfaceLowest,
-  },
-  filterButtonActive: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primary,
-  },
-  filterButtonText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: colors.textSecondary,
-  },
-  filterButtonTextActive: {
-    color: colors.white,
-  },
-  filterCount: {
-    minWidth: 20,
-    height: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 5,
-    borderRadius: 10,
-    backgroundColor: '#f3f4f6',
-  },
-  filterCountActive: {
-    backgroundColor: 'rgba(255,255,255,0.18)',
-  },
-  filterCountText: {
-    fontSize: 9,
+  heroCountBadgeText: {
+    fontSize: 12,
     fontWeight: '800',
-    color: colors.textSecondary,
+    color: '#ffffff',
   },
-  filterCountTextActive: {
-    color: colors.white,
-  },
-  inlineError: {
+  summaryCard: {
+    marginTop: 18,
+    marginHorizontal: 16,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    borderRadius: 22,
+    backgroundColor: '#ffffff',
     flexDirection: 'row',
     alignItems: 'center',
+    shadowColor: '#20335d',
+    shadowOpacity: 0.09,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
+  },
+  summaryCountBlock: {
+    width: 82,
+  },
+  summaryCountValue: {
+    fontSize: 38,
+    lineHeight: 41,
+    fontWeight: '800',
+    color: '#1f4fff',
+  },
+  summaryCountLabel: {
+    marginTop: 2,
+    fontSize: 14,
+    color: '#323b4f',
+  },
+  summaryDivider: {
+    width: 1,
+    alignSelf: 'stretch',
+    marginHorizontal: 14,
+    backgroundColor: '#e5e7eb',
+  },
+  markAllLargeButton: {
+    flex: 1,
+    minHeight: 50,
+    borderRadius: 18,
+    borderWidth: 2,
+    borderColor: '#1f4fff',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     gap: 8,
     paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 11,
+    backgroundColor: '#ffffff',
+  },
+  markAllLargeButtonDisabled: {
+    borderColor: '#d0d7e7',
+  },
+  markAllLargeButtonText: {
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '800',
+    color: '#1f4fff',
+  },
+  markAllLargeButtonTextDisabled: {
+    color: '#a0a6b5',
+  },
+  filterRow: {
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  filterChip: {
+    minHeight: 42,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 13,
+    borderRadius: 16,
+    backgroundColor: '#ffffff',
+    shadowColor: '#20335d',
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+  filterChipActive: {
+    backgroundColor: '#1f4fff',
+  },
+  filterChipText: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '700',
+    color: '#5c6478',
+  },
+  filterChipTextActive: {
+    color: '#ffffff',
+  },
+  filterChipCount: {
+    minWidth: 20,
+    height: 20,
+    paddingHorizontal: 6,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#eef2ff',
+  },
+  filterChipCountActive: {
+    backgroundColor: 'rgba(255,255,255,0.18)',
+  },
+  filterChipCountText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#1f4fff',
+  },
+  filterChipCountTextActive: {
+    color: '#ffffff',
+  },
+  inlineError: {
+    marginHorizontal: 24,
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#fecaca',
     backgroundColor: colors.errorBg,
   },
   inlineErrorText: {
     flex: 1,
-    fontSize: 11,
-    lineHeight: 16,
+    fontSize: 13,
+    lineHeight: 18,
     color: colors.errorText,
   },
   inlineRetryText: {
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
     color: colors.error,
   },
-  listIntroRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 2,
-  },
-  listIntroTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  listIntroCount: {
-    minWidth: 26,
-    height: 26,
-    textAlign: 'center',
-    textAlignVertical: 'center',
-    borderRadius: 13,
-    fontSize: 11,
-    fontWeight: '800',
-    color: colors.primary,
-    backgroundColor: '#eef3ff',
-  },
   sectionHeader: {
-    paddingVertical: 7,
-    backgroundColor: colors.surface,
-  },
-  sectionHeaderText: {
+    marginHorizontal: 18,
+    marginTop: 10,
+    marginBottom: 7,
     fontSize: 10,
     fontWeight: '800',
-    letterSpacing: 0.5,
+    letterSpacing: 0.4,
     textTransform: 'uppercase',
-    color: colors.textMuted,
+    color: '#7b8497',
   },
   notificationCard: {
+    marginHorizontal: 16,
+    paddingHorizontal: 13,
+    paddingVertical: 14,
+    borderRadius: 20,
+    backgroundColor: '#ffffff',
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 11,
-    padding: 13,
-    borderRadius: 15,
-    borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    backgroundColor: colors.surfaceLowest,
-  },
-  notificationCardUnread: {
-    borderColor: '#bfdbfe',
-    backgroundColor: '#fbfdff',
-    borderLeftWidth: 3,
-    borderLeftColor: colors.primary,
+    gap: 12,
+    shadowColor: '#20335d',
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 3,
   },
   notificationCardPressed: {
-    opacity: 0.78,
+    opacity: 0.9,
+    transform: [{ scale: 0.995 }],
   },
-  notificationIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
+  cardUnreadDot: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: '#1f4fff',
+    zIndex: 2,
+  },
+  cardIconWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  notificationContent: {
+  cardBody: {
     flex: 1,
     minWidth: 0,
+    paddingRight: 2,
   },
-  notificationMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-  notificationCategoryRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-  },
-  unreadDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.primary,
-  },
-  notificationCategory: {
-    fontSize: 9,
+  cardTitle: {
+    fontSize: 15,
+    lineHeight: 19,
     fontWeight: '800',
-    textTransform: 'uppercase',
-    letterSpacing: 0.45,
-    color: colors.textMuted,
+    color: '#18233c',
   },
-  notificationTime: {
-    fontSize: 9,
-    color: colors.textMuted,
-  },
-  notificationTitle: {
+  cardText: {
     marginTop: 4,
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.textPrimary,
-  },
-  notificationTitleUnread: {
-    fontWeight: '800',
-  },
-  notificationBody: {
-    marginTop: 3,
     fontSize: 11,
     lineHeight: 16,
-    color: colors.textSecondary,
+    color: '#4c5870',
   },
-  notificationAction: {
+  cardTime: {
     marginTop: 8,
+    fontSize: 9,
+    color: '#8a93a5',
+  },
+  cardRightColumn: {
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+    minWidth: 82,
+    paddingTop: 2,
+  },
+  cardPill: {
+    minHeight: 30,
+    minWidth: 76,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cardPillText: {
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: '800',
+  },
+  readStateRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
   },
-  notificationActionText: {
+  readStateText: {
     fontSize: 10,
-    fontWeight: '700',
-    color: colors.primary,
+    color: '#98a2b3',
+  },
+  hiddenOrderLink: {
+    fontSize: 12,
+    color: 'transparent',
   },
   itemSeparator: {
     height: 9,
   },
   sectionSeparator: {
-    height: 8,
+    height: 6,
   },
   emptyState: {
-    marginTop: 8,
+    marginHorizontal: 16,
+    marginTop: 10,
+    paddingHorizontal: 20,
+    paddingVertical: 32,
+    borderRadius: 24,
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingHorizontal: 24,
-    paddingVertical: 42,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    backgroundColor: colors.surfaceLowest,
+    backgroundColor: '#ffffff',
+    shadowColor: '#20335d',
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 2,
   },
-  emptyIcon: {
+  emptyStateIcon: {
     width: 56,
     height: 56,
     borderRadius: 28,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#eef3ff',
+    backgroundColor: '#eef4ff',
   },
-  emptyTitle: {
-    marginTop: 2,
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    textAlign: 'center',
+  emptyStateTitle: {
+    marginTop: 12,
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#172033',
   },
-  emptyDescription: {
+  emptyStateText: {
+    marginTop: 6,
     fontSize: 11,
     lineHeight: 17,
-    color: colors.textSecondary,
     textAlign: 'center',
+    color: '#667085',
   },
-  emptyButton: {
-    marginTop: 5,
-    minHeight: 38,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    backgroundColor: '#eef3ff',
-  },
-  emptyButtonText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.primary,
-  },
-  footerNote: {
-    marginTop: 18,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 7,
-    paddingHorizontal: 4,
-  },
-  footerNoteText: {
-    flex: 1,
-    fontSize: 10,
-    lineHeight: 15,
-    color: colors.textMuted,
+  footerSpacer: {
+    height: 16,
   },
 })

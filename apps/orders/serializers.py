@@ -1,5 +1,10 @@
 from rest_framework import serializers
 
+from apps.delivery.models import (
+    DeliveryIncident,
+    DeliveryIncidentStatus,
+)
+
 from .constants import PaymentMethod, PrescriptionMode
 from .models import (
     ChatMessage,
@@ -29,6 +34,33 @@ class OrderCreateSerializer(serializers.Serializer):
     prescription_photo = serializers.ImageField(required=False, allow_null=True)
     notes = serializers.CharField(required=False, allow_blank=True, max_length=1000)
 
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+
+        latitude = attrs.get('latitude')
+        longitude = attrs.get('longitude')
+
+        if (
+            latitude is not None
+            and longitude is not None
+            and abs(latitude) < 0.000001
+            and abs(longitude) < 0.000001
+        ):
+            raise serializers.ValidationError(
+                {
+                    'latitude': (
+                        'A real delivery GPS position is required; '
+                        '0,0 is not accepted.'
+                    ),
+                    'longitude': (
+                        'A real delivery GPS position is required; '
+                        '0,0 is not accepted.'
+                    ),
+                },
+            )
+
+        return attrs
+
 
 class OrderItemReadSerializer(serializers.ModelSerializer):
     medicine_name = serializers.CharField(source='medicine.name', read_only=True)
@@ -56,6 +88,27 @@ class OrderStatusHistoryReadSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+CUSTOMER_VISIBLE_INCIDENT_STATUSES = (
+    DeliveryIncidentStatus.OPEN,
+    DeliveryIncidentStatus.RETURN_REQUIRED,
+    DeliveryIncidentStatus.RETURNING,
+    DeliveryIncidentStatus.RETURNED,
+)
+
+
+class CustomerDeliveryIncidentSerializer(serializers.ModelSerializer):
+    """Minimal delivery-incident state safe for the patient application.
+
+    Courier identity, raw reason, free-text details, and supervisor resolution
+    notes remain private operational data and are intentionally not exposed.
+    """
+
+    class Meta:
+        model = DeliveryIncident
+        fields = ('id', 'status', 'created_at', 'updated_at')
+        read_only_fields = fields
+
+
 class _BaseOrderSerializer(serializers.ModelSerializer):
     items = OrderItemReadSerializer(many=True, read_only=True)
     prescription = PrescriptionReadSerializer(read_only=True)
@@ -73,17 +126,44 @@ class CustomerOrderSerializer(_BaseOrderSerializer):
     """Customer view — pharmacy identity stripped."""
 
     status_history = OrderStatusHistoryReadSerializer(many=True, read_only=True)
+    delivery_incident = serializers.SerializerMethodField()
+    delivery_agent_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
         fields = (
             'id', 'status', 'prescription_mode', 'payment_method',
             'delivery_address', 'delivery_latitude', 'delivery_longitude',
-            'items', 'prescription', 'status_history',
+            'items', 'prescription', 'status_history', 'delivery_incident',
+            'delivery_agent_name',
             'items_total', 'delivery_fee', 'grand_total',
             'notes', 'created_at', 'updated_at',
         )
         read_only_fields = fields
+
+    def get_delivery_agent_name(self, obj):
+        # Patient-safe identity: only the assigned courier display name.
+        # Preserve Step 2 privacy while an unresolved incident/return is active.
+        has_active_incident = any(
+            incident.status in CUSTOMER_VISIBLE_INCIDENT_STATUSES
+            for incident in obj.delivery_incidents.all()
+        )
+        if has_active_incident or obj.delivery_agent is None:
+            return None
+        return obj.delivery_agent.full_name
+
+    def get_delivery_incident(self, obj):
+        incident = next(
+            (
+                incident
+                for incident in obj.delivery_incidents.all()
+                if incident.status in CUSTOMER_VISIBLE_INCIDENT_STATUSES
+            ),
+            None,
+        )
+        if incident is None:
+            return None
+        return CustomerDeliveryIncidentSerializer(incident).data
 
 
 class PharmacyOrderSerializer(_BaseOrderSerializer):

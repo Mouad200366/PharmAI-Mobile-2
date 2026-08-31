@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+// ADDRESSES_APPROVED_MOCKUP_MAPLIBRE_V2
 import {
   ActivityIndicator,
   Alert,
@@ -10,10 +10,29 @@ import {
   TextInput,
   View,
 } from 'react-native'
+import {
+  useCallback,
+  useMemo,
+  useState,
+  useLayoutEffect,
+} from 'react'
 import { useFocusEffect } from '@react-navigation/native'
+import type {
+  NativeStackScreenProps,
+} from '@react-navigation/native-stack'
 import * as Location from 'expo-location'
-import MapView, { Marker } from 'react-native-maps'
+import {
+  Camera,
+  Map,
+  ViewAnnotation,
+} from '@maplibre/maplibre-react-native'
+import { LinearGradient } from 'expo-linear-gradient'
+import { StatusBar } from 'expo-status-bar'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
+import type {
+  MainStackParamList,
+} from '../../navigation/types'
 import {
   addressesApi,
   type Address,
@@ -21,7 +40,11 @@ import {
 } from '../../api/addresses'
 import { firstError } from '../../api/errors'
 import Icon from '../../components/ui/Icon'
-import { colors } from '../../theme/colors'
+
+type Props = NativeStackScreenProps<
+  MainStackParamList,
+  'Addresses'
+>
 
 const LABEL_OPTIONS = [
   { value: 'Domicile', icon: 'home' },
@@ -42,6 +65,27 @@ const CITIES = [
   'Martil',
 ]
 
+const MAX_ADDRESSES = 5
+
+const DEV_MAP_STYLE =
+  'https://demotiles.maplibre.org/style.json'
+
+const NAVY = '#00236f'
+const BLUE = '#073bdf'
+const BRIGHT_BLUE = '#087dff'
+const CYAN = '#10d1d0'
+const TEXT = '#0b1f4d'
+const MUTED = '#6b7c96'
+const BORDER = '#dfe8f4'
+const SURFACE = '#f7faff'
+const GREEN = '#16a34a'
+const RED = '#ef233c'
+
+interface Coordinates {
+  latitude: number
+  longitude: number
+}
+
 const CITY_CENTERS: Record<string, Coordinates> = {
   Casablanca: { latitude: 33.5731, longitude: -7.5898 },
   Rabat: { latitude: 34.0209, longitude: -6.8416 },
@@ -54,93 +98,171 @@ const CITY_CENTERS: Record<string, Coordinates> = {
   Martil: { latitude: 35.6166, longitude: -5.2752 },
 }
 
-const MAX_ADDRESSES = 5
-
-interface Coordinates {
-  latitude: number
-  longitude: number
-}
-
 function labelIcon(label: string) {
   return (
-    LABEL_OPTIONS.find((option) => option.value === label)?.icon ??
-    'location_on'
+    LABEL_OPTIONS.find(
+      (option) => option.value === label,
+    )?.icon ?? 'location_on'
   )
 }
 
-function parseCoordinate(value: unknown): number | null {
-  if (value === null || value === undefined || value === '') {
+function parseCoordinate(
+  value: unknown,
+): number | null {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ''
+  ) {
     return null
   }
 
   const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : null
+
+  return Number.isFinite(parsed)
+    ? parsed
+    : null
 }
 
-function coordinatesFromAddress(address: Address | null): Coordinates | null {
+function coordinatesFromAddress(
+  address: Address | null,
+): Coordinates | null {
   if (!address) {
     return null
   }
 
-  const latitude = parseCoordinate(address.latitude)
-  const longitude = parseCoordinate(address.longitude)
+  const latitude =
+    parseCoordinate(address.latitude)
 
-  if (latitude === null || longitude === null) {
+  const longitude =
+    parseCoordinate(address.longitude)
+
+  if (
+    latitude === null ||
+    longitude === null
+  ) {
     return null
   }
 
-  // Old development records sometimes used 0,0 as a placeholder.
-  // That point is not a usable delivery position for this application.
-  if (Math.abs(latitude) < 0.000001 && Math.abs(longitude) < 0.000001) {
+  if (
+    Math.abs(latitude) < 0.000001 &&
+    Math.abs(longitude) < 0.000001
+  ) {
     return null
   }
 
-  return { latitude, longitude }
-}
-
-function formatCoordinates(coordinates: Coordinates) {
-  return `${coordinates.latitude.toFixed(5)}, ${coordinates.longitude.toFixed(5)}`
-}
-
-function normalizeCoordinate(value: number) {
-  return Number(value.toFixed(6))
-}
-
-function mapRegionFor(coordinates: Coordinates) {
   return {
-    ...coordinates,
-    latitudeDelta: 0.025,
-    longitudeDelta: 0.025,
+    latitude,
+    longitude,
   }
 }
 
-export default function Addresses() {
-  const [addresses, setAddresses] = useState<Address[]>([])
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
-  const [loadError, setLoadError] = useState('')
-  const [mode, setMode] = useState<'list' | 'form'>('list')
-  const [editing, setEditing] = useState<Address | null>(null)
+function normalizeCoordinate(
+  value: number,
+) {
+  return Number(
+    value.toFixed(6),
+  )
+}
 
-  const load = useCallback(async () => {
-    try {
-      const response = await addressesApi.list()
-      setAddresses(response.data.results)
-      setLoadError('')
-    } catch (error) {
-      setLoadError(
-        firstError(error) ||
-          "Impossible de charger vos adresses pour le moment.",
-      )
-    }
-  }, [])
+function formatCoordinates(
+  coordinates: Coordinates,
+) {
+  return `${coordinates.latitude.toFixed(
+    5,
+  )}, ${coordinates.longitude.toFixed(5)}`
+}
+
+
+function toLngLat(
+  coordinates: Coordinates,
+): [number, number] {
+  return [
+    coordinates.longitude,
+    coordinates.latitude,
+  ]
+}
+
+function fromLngLat(
+  lngLat: readonly [number, number],
+): Coordinates {
+  return {
+    longitude: lngLat[0],
+    latitude: lngLat[1],
+  }
+}
+
+export default function Addresses({
+  navigation,
+}: Props) {
+  const insets = useSafeAreaInsets()
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerShown: false,
+    })
+  }, [navigation])
+
+  const [
+    addresses,
+    setAddresses,
+  ] = useState<Address[]>([])
+
+  const [
+    loading,
+    setLoading,
+  ] = useState(true)
+
+  const [
+    refreshing,
+    setRefreshing,
+  ] = useState(false)
+
+  const [
+    loadError,
+    setLoadError,
+  ] = useState('')
+
+  const [
+    mode,
+    setMode,
+  ] =
+    useState<'list' | 'form'>(
+      'list',
+    )
+
+  const [
+    editing,
+    setEditing,
+  ] = useState<Address | null>(
+    null,
+  )
+
+  const load =
+    useCallback(async () => {
+      try {
+        const response =
+          await addressesApi.list()
+
+        setAddresses(
+          response.data.results,
+        )
+        setLoadError('')
+      } catch (error) {
+        setLoadError(
+          firstError(error) ||
+            'Impossible de charger vos adresses pour le moment.',
+        )
+      }
+    }, [])
 
   useFocusEffect(
     useCallback(() => {
       let active = true
 
       setLoading(true)
-      load().finally(() => {
+
+      void load().finally(() => {
         if (active) {
           setLoading(false)
         }
@@ -152,14 +274,18 @@ export default function Addresses() {
     }, [load]),
   )
 
-  const handleRefresh = useCallback(async () => {
-    setRefreshing(true)
-    await load()
-    setRefreshing(false)
-  }, [load])
+  const handleRefresh =
+    useCallback(async () => {
+      setRefreshing(true)
+      await load()
+      setRefreshing(false)
+    }, [load])
 
   function openNew() {
-    if (addresses.length >= MAX_ADDRESSES) {
+    if (
+      addresses.length >=
+      MAX_ADDRESSES
+    ) {
       Alert.alert(
         'Limite atteinte',
         `Vous pouvez enregistrer jusqu'à ${MAX_ADDRESSES} adresses.`,
@@ -171,7 +297,9 @@ export default function Addresses() {
     setMode('form')
   }
 
-  function openEdit(address: Address) {
+  function openEdit(
+    address: Address,
+  ) {
     setEditing(address)
     setMode('form')
   }
@@ -181,26 +309,14 @@ export default function Addresses() {
     setEditing(null)
   }
 
-  function confirmDelete(address: Address) {
-    Alert.alert(
-      'Supprimer cette adresse ?',
-      `Vous êtes sur le point de supprimer l'adresse « ${address.label} » (${address.street}). Cette action est irréversible.`,
-      [
-        { text: 'Annuler', style: 'cancel' },
-        {
-          text: 'Supprimer',
-          style: 'destructive',
-          onPress: () => {
-            void handleDelete(address)
-          },
-        },
-      ],
-    )
-  }
-
-  async function handleDelete(address: Address) {
+  async function handleDelete(
+    address: Address,
+  ) {
     try {
-      await addressesApi.delete(address.id)
+      await addressesApi.delete(
+        address.id,
+      )
+
       await load()
     } catch (error) {
       Alert.alert(
@@ -211,9 +327,38 @@ export default function Addresses() {
     }
   }
 
-  async function handleSetDefault(id: number) {
+  function confirmDelete(
+    address: Address,
+  ) {
+    Alert.alert(
+      'Supprimer cette adresse ?',
+      `Vous êtes sur le point de supprimer l'adresse « ${address.label} » (${address.street}). Cette action est irréversible.`,
+      [
+        {
+          text: 'Annuler',
+          style: 'cancel',
+        },
+        {
+          text: 'Supprimer',
+          style: 'destructive',
+          onPress: () => {
+            void handleDelete(
+              address,
+            )
+          },
+        },
+      ],
+    )
+  }
+
+  async function handleSetDefault(
+    id: number,
+  ) {
     try {
-      await addressesApi.setDefault(id)
+      await addressesApi.setDefault(
+        id,
+      )
+
       await load()
     } catch (error) {
       Alert.alert(
@@ -237,234 +382,601 @@ export default function Addresses() {
     )
   }
 
-  if (loading) {
-    return (
-      <View style={styles.centerScreen}>
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={styles.loadingText}>Chargement de vos adresses…</Text>
-      </View>
-    )
-  }
-
   return (
-    <ScrollView
-      style={styles.screen}
-      contentContainerStyle={styles.content}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={handleRefresh}
-          tintColor={colors.primary}
-          colors={[colors.primary]}
-        />
-      }
-    >
-      <View style={styles.headerRow}>
-        <View style={styles.headerTextContainer}>
-          <Text style={styles.title}>Mes adresses</Text>
-          <Text style={styles.subtitle}>
-            Gérez vos adresses et leurs positions GPS pour la livraison.
-          </Text>
-          <Text style={styles.addressCount}>
-            {addresses.length} adresse{addresses.length !== 1 ? 's' : ''}{' '}
-            enregistrée{addresses.length !== 1 ? 's' : ''}
-          </Text>
-        </View>
-      </View>
+    <View style={styles.screen}>
+      <StatusBar style="light" />
 
-      <Pressable
-        style={[
-          styles.addButton,
-          addresses.length >= MAX_ADDRESSES && styles.buttonDisabled,
+      <ScrollView
+        style={styles.screen}
+        contentContainerStyle={[
+          styles.listContent,
+          {
+            paddingBottom:
+              Math.max(
+                insets.bottom,
+                12,
+              ) + 28,
+          },
         ]}
-        onPress={openNew}
-        disabled={addresses.length >= MAX_ADDRESSES}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={
+              handleRefresh
+            }
+            tintColor={BLUE}
+            colors={[BLUE]}
+          />
+        }
+        showsVerticalScrollIndicator={
+          false
+        }
       >
-        <Icon name="add_location_alt" size={19} color={colors.white} />
-        <Text style={styles.addButtonText}>Ajouter une adresse</Text>
-      </Pressable>
+        <LinearGradient
+          colors={[
+            NAVY,
+            BLUE,
+            BRIGHT_BLUE,
+            CYAN,
+          ]}
+          start={{ x: 0, y: 0.1 }}
+          end={{ x: 1, y: 0.9 }}
+          style={[
+            styles.hero,
+            {
+              paddingTop:
+                insets.top + 12,
+            },
+          ]}
+        >
+          <View style={styles.heroRow}>
+            <Pressable
+              style={styles.heroBack}
+              onPress={() =>
+                navigation.goBack()
+              }
+            >
+              <Icon
+                name="arrow_back"
+                size={21}
+                color="#ffffff"
+              />
+            </Pressable>
 
-      {loadError ? (
-        <View style={styles.errorState}>
-          <Icon name="cloud_off" size={34} color={colors.error} />
-          <Text style={styles.errorStateTitle}>Chargement impossible</Text>
-          <Text style={styles.errorStateText}>{loadError}</Text>
-          <Pressable style={styles.retryButton} onPress={() => void load()}>
-            <Icon name="refresh" size={17} color={colors.white} />
-            <Text style={styles.retryButtonText}>Réessayer</Text>
-          </Pressable>
-        </View>
-      ) : addresses.length === 0 ? (
-        <View style={styles.emptyState}>
-          <View style={styles.emptyIcon}>
-            <Icon name="location_off" size={38} color={colors.primary} />
-          </View>
-          <Text style={styles.emptyTitle}>Aucune adresse enregistrée</Text>
-          <Text style={styles.emptyText}>
-            Ajoutez une adresse avec sa position GPS pour pouvoir confirmer
-            vos commandes.
-          </Text>
-        </View>
-      ) : (
-        <View style={styles.cardsContainer}>
-          {addresses.map((address) => {
-            const hasCoordinates = Boolean(coordinatesFromAddress(address))
-
-            return (
-              <View
-                key={address.id}
-                style={[
-                  styles.addressCard,
-                  address.is_default && styles.addressCardDefault,
-                ]}
+            <View style={styles.heroText}>
+              <Text
+                style={styles.heroTitle}
               >
-                <View style={styles.addressCardHeader}>
-                  <View
-                    style={[
-                      styles.labelChip,
-                      address.is_default && styles.labelChipDefault,
-                    ]}
-                  >
-                    <Icon
-                      name={labelIcon(address.label)}
-                      size={14}
-                      color={
-                        address.is_default
-                          ? colors.white
-                          : colors.textSecondary
-                      }
-                    />
-                    <Text
-                      style={[
-                        styles.labelChipText,
-                        address.is_default && styles.labelChipTextActive,
-                      ]}
-                    >
-                      {address.label}
-                    </Text>
-                  </View>
+                Mes adresses
+              </Text>
 
-                  {address.is_default && (
-                    <View style={styles.defaultBadge}>
-                      <Icon name="check_circle" size={13} color="#047857" />
-                      <Text style={styles.defaultBadgeText}>Par défaut</Text>
-                    </View>
-                  )}
+              <Text
+                style={
+                  styles.heroSubtitle
+                }
+              >
+                Gérez vos adresses de
+                livraison
+              </Text>
+            </View>
 
-                  <View style={styles.cardHeaderSpacer} />
-
-                  <Pressable
-                    style={styles.iconButton}
-                    onPress={() => openEdit(address)}
-                    accessibilityLabel={`Modifier l'adresse ${address.label}`}
-                  >
-                    <Icon name="edit" size={18} color={colors.textMuted} />
-                  </Pressable>
-
-                  <Pressable
-                    style={styles.iconButton}
-                    onPress={() => confirmDelete(address)}
-                    accessibilityLabel={`Supprimer l'adresse ${address.label}`}
-                  >
-                    <Icon name="delete" size={18} color={colors.textMuted} />
-                  </Pressable>
-                </View>
-
-                <Text style={styles.addressStreet}>{address.street}</Text>
-                <Text style={styles.addressCity}>
-                  {address.city}
-                  {address.postal_code ? ` — ${address.postal_code}` : ''}
-                </Text>
-
-                <View
-                  style={[
-                    styles.gpsStatus,
-                    hasCoordinates
-                      ? styles.gpsStatusSuccess
-                      : styles.gpsStatusWarning,
-                  ]}
-                >
-                  <Icon
-                    name={hasCoordinates ? 'my_location' : 'location_off'}
-                    size={16}
-                    color={hasCoordinates ? '#047857' : '#b45309'}
-                  />
-                  <Text
-                    style={[
-                      styles.gpsStatusText,
-                      {
-                        color: hasCoordinates ? '#047857' : '#92400e',
-                      },
-                    ]}
-                  >
-                    {hasCoordinates
-                      ? 'Position GPS enregistrée'
-                      : 'Position GPS manquante — modifiez cette adresse'}
-                  </Text>
-                </View>
-
-                <View style={styles.addressFooter}>
-                  <View style={styles.addressFooterLeft}>
-                    <Icon
-                      name="two_wheeler"
-                      size={16}
-                      color={colors.textMuted}
-                    />
-                    <Text style={styles.addressFooterText}>
-                      Adresse de livraison
-                    </Text>
-                  </View>
-
-                  {!address.is_default ? (
-                    <Pressable
-                      onPress={() => void handleSetDefault(address.id)}
-                    >
-                      <Text style={styles.setDefaultLink}>
-                        Définir par défaut
-                      </Text>
-                    </Pressable>
-                  ) : (
-                    <Text style={styles.setDefaultDisabled}>Adresse active</Text>
-                  )}
-                </View>
-              </View>
-            )
-          })}
-        </View>
-      )}
-
-      {addresses.length < MAX_ADDRESSES && !loadError && (
-        <Pressable style={styles.dashedAdd} onPress={openNew}>
-          <View style={styles.dashedAddIcon}>
-            <Icon name="add" size={24} color={colors.accentLight} />
-          </View>
-          <Text style={styles.dashedAddText}>
-            Ajouter une nouvelle adresse
-          </Text>
-        </Pressable>
-      )}
-
-      <View style={styles.limitStrip}>
-        <View style={styles.limitInformation}>
-          <Icon name="info" size={18} color={colors.primary} />
-          <Text style={styles.limitText}>
-            Jusqu'à {MAX_ADDRESSES} adresses · {addresses.length} sur{' '}
-            {MAX_ADDRESSES} utilisées
-          </Text>
-        </View>
-        <View style={styles.limitDots}>
-          {Array.from({ length: MAX_ADDRESSES }).map((_, index) => (
-            <View
-              key={index}
+            <Pressable
               style={[
-                styles.limitDot,
-                index < addresses.length && styles.limitDotFilled,
+                styles.heroAdd,
+                addresses.length >=
+                  MAX_ADDRESSES &&
+                  styles.disabled,
               ]}
+              onPress={openNew}
+              disabled={
+                addresses.length >=
+                MAX_ADDRESSES
+              }
+            >
+              <Icon
+                name="add"
+                size={27}
+                color="#ffffff"
+              />
+            </Pressable>
+          </View>
+        </LinearGradient>
+
+        <View style={styles.safeNotice}>
+          <View
+            style={
+              styles.safeNoticeIcon
+            }
+          >
+            <Icon
+              name="location_on"
+              size={25}
+              color={BLUE}
             />
-          ))}
+          </View>
+
+          <View
+            style={
+              styles.safeNoticeText
+            }
+          >
+            <Text
+              style={
+                styles.safeNoticeTitle
+              }
+            >
+              Livraison rapide et
+              sécurisée
+            </Text>
+
+            <Text
+              style={
+                styles.safeNoticeSubtitle
+              }
+            >
+              Vos adresses enregistrées
+              sont utilisées avec leur
+              position GPS pour vos
+              livraisons.
+            </Text>
+          </View>
+
+          <View
+            style={
+              styles.safeNoticeShield
+            }
+          >
+            <Icon
+              name="verified_user"
+              size={25}
+              color={BLUE}
+            />
+          </View>
         </View>
-      </View>
-    </ScrollView>
+
+        <View style={styles.sectionHeading}>
+          <View>
+            <Text
+              style={
+                styles.sectionHeadingTitle
+              }
+            >
+              Adresses enregistrées
+            </Text>
+
+            <Text
+              style={
+                styles.sectionHeadingSubtitle
+              }
+            >
+              {addresses.length} sur{' '}
+              {MAX_ADDRESSES} utilisées
+            </Text>
+          </View>
+        </View>
+
+        {loading ? (
+          <View style={styles.stateCard}>
+            <ActivityIndicator
+              size="large"
+              color={BLUE}
+            />
+
+            <Text
+              style={styles.stateTitle}
+            >
+              Chargement de vos
+              adresses…
+            </Text>
+          </View>
+        ) : loadError ? (
+          <View style={styles.stateCard}>
+            <View
+              style={
+                styles.errorStateIcon
+              }
+            >
+              <Icon
+                name="cloud_off"
+                size={30}
+                color={RED}
+              />
+            </View>
+
+            <Text
+              style={styles.stateTitle}
+            >
+              Chargement impossible
+            </Text>
+
+            <Text
+              style={styles.stateText}
+            >
+              {loadError}
+            </Text>
+
+            <Pressable
+              style={styles.retryButton}
+              onPress={() => {
+                void load()
+              }}
+            >
+              <Icon
+                name="refresh"
+                size={17}
+                color="#ffffff"
+              />
+
+              <Text
+                style={
+                  styles.retryButtonText
+                }
+              >
+                Réessayer
+              </Text>
+            </Pressable>
+          </View>
+        ) : addresses.length === 0 ? (
+          <View style={styles.stateCard}>
+            <View
+              style={
+                styles.emptyStateIcon
+              }
+            >
+              <Icon
+                name="location_off"
+                size={32}
+                color={BLUE}
+              />
+            </View>
+
+            <Text
+              style={styles.stateTitle}
+            >
+              Aucune adresse
+              enregistrée
+            </Text>
+
+            <Text
+              style={styles.stateText}
+            >
+              Ajoutez une adresse avec
+              une position GPS pour
+              pouvoir confirmer vos
+              commandes.
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.addressList}>
+            {addresses.map(
+              (address) => {
+                const coordinates =
+                  coordinatesFromAddress(
+                    address,
+                  )
+
+                const hasCoordinates =
+                  Boolean(coordinates)
+
+                return (
+                  <View
+                    key={address.id}
+                    style={[
+                      styles.addressCard,
+                      address.is_default &&
+                        styles.addressCardDefault,
+                    ]}
+                  >
+                    <View
+                      style={
+                        styles.addressTopRow
+                      }
+                    >
+                      <View
+                        style={
+                          styles.addressLabelIcon
+                        }
+                      >
+                        <Icon
+                          name={labelIcon(
+                            address.label,
+                          )}
+                          size={27}
+                          color={BLUE}
+                        />
+                      </View>
+
+                      <View
+                        style={
+                          styles.addressMain
+                        }
+                      >
+                        <View
+                          style={
+                            styles.addressTitleRow
+                          }
+                        >
+                          <Text
+                            style={
+                              styles.addressLabel
+                            }
+                            numberOfLines={
+                              1
+                            }
+                          >
+                            {address.label}
+                          </Text>
+
+                          {address.is_default ? (
+                            <View
+                              style={
+                                styles.defaultBadge
+                              }
+                            >
+                              <Text
+                                style={
+                                  styles.defaultBadgeText
+                                }
+                              >
+                                Adresse par
+                                défaut
+                              </Text>
+                            </View>
+                          ) : null}
+                        </View>
+
+                        {address.is_default ? (
+                          <View
+                            style={
+                              styles.currentBadge
+                            }
+                          >
+                            <Text
+                              style={
+                                styles.currentBadgeText
+                              }
+                            >
+                              Adresse
+                              actuelle
+                            </Text>
+                          </View>
+                        ) : null}
+
+                        <Text
+                          style={
+                            styles.addressStreet
+                          }
+                        >
+                          {address.street}
+                        </Text>
+
+                        <Text
+                          style={
+                            styles.addressCity
+                          }
+                        >
+                          {address.city}
+                          {address.postal_code
+                            ? ` ${address.postal_code}`
+                            : ''}
+                        </Text>
+
+                        <View
+                          style={
+                            styles.gpsLine
+                          }
+                        >
+                          <Icon
+                            name={
+                              hasCoordinates
+                                ? 'my_location'
+                                : 'location_off'
+                            }
+                            size={15}
+                            color={
+                              hasCoordinates
+                                ? GREEN
+                                : '#c76a18'
+                            }
+                          />
+
+                          <Text
+                            style={[
+                              styles.gpsLineText,
+                              !hasCoordinates &&
+                                styles.gpsWarningText,
+                            ]}
+                          >
+                            {hasCoordinates
+                              ? 'Position GPS enregistrée'
+                              : 'Position GPS manquante'}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <Pressable
+                        style={
+                          styles.defaultSelector
+                        }
+                        onPress={() => {
+                          if (
+                            !address.is_default
+                          ) {
+                            void handleSetDefault(
+                              address.id,
+                            )
+                          }
+                        }}
+                        accessibilityLabel={
+                          address.is_default
+                            ? 'Adresse par défaut'
+                            : 'Définir comme adresse par défaut'
+                        }
+                      >
+                        {address.is_default ? (
+                          <View
+                            style={
+                              styles.defaultSelectorActive
+                            }
+                          >
+                            <View
+                              style={
+                                styles.defaultSelectorInner
+                              }
+                            />
+                          </View>
+                        ) : (
+                          <View
+                            style={
+                              styles.defaultSelectorInactive
+                            }
+                          />
+                        )}
+                      </Pressable>
+                    </View>
+
+                    <View
+                      style={
+                        styles.addressActions
+                      }
+                    >
+                      <Pressable
+                        style={
+                          styles.addressAction
+                        }
+                        onPress={() =>
+                          openEdit(
+                            address,
+                          )
+                        }
+                      >
+                        <Icon
+                          name="edit"
+                          size={18}
+                          color={BLUE}
+                        />
+
+                        <Text
+                          style={
+                            styles.addressActionEdit
+                          }
+                        >
+                          Modifier
+                        </Text>
+                      </Pressable>
+
+                      <View
+                        style={
+                          styles.actionDivider
+                        }
+                      />
+
+                      <Pressable
+                        style={
+                          styles.addressAction
+                        }
+                        onPress={() =>
+                          confirmDelete(
+                            address,
+                          )
+                        }
+                      >
+                        <Icon
+                          name="delete_outline"
+                          size={18}
+                          color={RED}
+                        />
+
+                        <Text
+                          style={
+                            styles.addressActionDelete
+                          }
+                        >
+                          Supprimer
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                )
+              },
+            )}
+          </View>
+        )}
+
+        {!loadError &&
+        addresses.length <
+          MAX_ADDRESSES ? (
+          <Pressable
+            style={styles.addAddressButton}
+            onPress={openNew}
+          >
+            <Icon
+              name="add"
+              size={22}
+              color="#ffffff"
+            />
+
+            <Text
+              style={
+                styles.addAddressButtonText
+              }
+            >
+              Ajouter une nouvelle
+              adresse
+            </Text>
+          </Pressable>
+        ) : null}
+
+        <View style={styles.limitCard}>
+          <View
+            style={styles.limitIcon}
+          >
+            <Icon
+              name="info_outline"
+              size={21}
+              color={BLUE}
+            />
+          </View>
+
+          <View
+            style={styles.limitText}
+          >
+            <Text
+              style={styles.limitTitle}
+            >
+              Adresses de livraison
+            </Text>
+
+            <Text
+              style={
+                styles.limitSubtitle
+              }
+            >
+              Vous pouvez enregistrer
+              jusqu’à {MAX_ADDRESSES}{' '}
+              adresses avec une position
+              GPS précise.
+            </Text>
+          </View>
+
+          <View style={styles.limitDots}>
+            {Array.from({
+              length: MAX_ADDRESSES,
+            }).map((_, index) => (
+              <View
+                key={index}
+                style={[
+                  styles.limitDot,
+                  index <
+                    addresses.length &&
+                    styles.limitDotFilled,
+                ]}
+              />
+            ))}
+          </View>
+        </View>
+      </ScrollView>
+    </View>
   )
 }
 
@@ -477,53 +989,132 @@ function AddressForm({
   onClose: () => void
   onSaved: () => void
 }) {
-  const initialCoordinates = coordinatesFromAddress(initial)
+  const insets = useSafeAreaInsets()
 
-  const [form, setForm] = useState({
-    label: initial?.label ?? 'Domicile',
-    street: initial?.street ?? '',
-    city: initial?.city ?? 'Casablanca',
-    postal_code: initial?.postal_code ?? '',
-    is_default: initial?.is_default ?? false,
+  const initialCoordinates =
+    coordinatesFromAddress(initial)
+
+  const [
+    step,
+    setStep,
+  ] = useState<1 | 2>(1)
+
+  const [
+    form,
+    setForm,
+  ] = useState({
+    label:
+      initial?.label ??
+      'Domicile',
+    street:
+      initial?.street ?? '',
+    city:
+      initial?.city ??
+      'Casablanca',
+    postal_code:
+      initial?.postal_code ?? '',
+    is_default:
+      initial?.is_default ??
+      false,
   })
-  const [coordinates, setCoordinates] = useState<Coordinates | null>(
-    initialCoordinates,
-  )
-  const [locating, setLocating] = useState(false)
-  const [manualMapOpen, setManualMapOpen] = useState(false)
-  const [manualCoordinates, setManualCoordinates] =
-    useState<Coordinates | null>(null)
-  const [manualMapKey, setManualMapKey] = useState(0)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-  const [locationError, setLocationError] = useState('')
 
-  const cityOptions = useMemo(() => {
-    if (form.city && !CITIES.includes(form.city)) {
-      return [form.city, ...CITIES]
-    }
+  const [
+    coordinates,
+    setCoordinates,
+  ] =
+    useState<Coordinates | null>(
+      initialCoordinates,
+    )
 
-    return CITIES
-  }, [form.city])
+  const [
+    locating,
+    setLocating,
+  ] = useState(false)
 
-  function cityCenter(city = form.city) {
-    return CITY_CENTERS[city] ?? CITY_CENTERS.Casablanca
+  const [
+    manualMapOpen,
+    setManualMapOpen,
+  ] = useState(false)
+
+  const [
+    manualCoordinates,
+    setManualCoordinates,
+  ] =
+    useState<Coordinates | null>(
+      null,
+    )
+
+  const [
+    manualMapKey,
+    setManualMapKey,
+  ] = useState(0)
+
+  const [
+    saving,
+    setSaving,
+  ] = useState(false)
+
+  const [
+    error,
+    setError,
+  ] = useState('')
+
+  const [
+    locationError,
+    setLocationError,
+  ] = useState('')
+
+  const cityOptions =
+    useMemo(() => {
+      if (
+        form.city &&
+        !CITIES.includes(form.city)
+      ) {
+        return [
+          form.city,
+          ...CITIES,
+        ]
+      }
+
+      return CITIES
+    }, [form.city])
+
+  function cityCenter(
+    city = form.city,
+  ) {
+    return (
+      CITY_CENTERS[city] ??
+      CITY_CENTERS.Casablanca
+    )
   }
 
   function openManualMap() {
     setError('')
     setLocationError('')
 
-    const startCoordinates = coordinates ?? cityCenter()
+    const startCoordinates =
+      coordinates ??
+      cityCenter()
 
-    setManualCoordinates(startCoordinates)
-    setManualMapKey((current) => current + 1)
+    setManualCoordinates(
+      startCoordinates,
+    )
+    setManualMapKey(
+      (current) =>
+        current + 1,
+    )
     setManualMapOpen(true)
   }
 
   function centerManualMapOnCity() {
-    setManualCoordinates(cityCenter())
-    setManualMapKey((current) => current + 1)
+    setManualCoordinates(
+      cityCenter(),
+    )
+
+    setManualMapKey(
+      (current) =>
+        current + 1,
+    )
   }
 
   function confirmManualLocation() {
@@ -534,7 +1125,9 @@ function AddressForm({
       return
     }
 
-    setCoordinates(manualCoordinates)
+    setCoordinates(
+      manualCoordinates,
+    )
     setManualMapOpen(false)
     setLocationError('')
   }
@@ -544,17 +1137,26 @@ function AddressForm({
     setManualCoordinates(null)
   }
 
-  function selectCity(city: string) {
-    if (city === form.city) {
+  function selectCity(
+    city: string,
+  ) {
+    if (
+      city === form.city
+    ) {
       return
     }
 
-    setForm((current) => ({ ...current, city }))
+    setForm(
+      (current) => ({
+        ...current,
+        city,
+      }),
+    )
     setCoordinates(null)
     setManualCoordinates(null)
     setManualMapOpen(false)
     setLocationError(
-      `La ville a été changée vers ${city}. Choisissez maintenant sa position exacte sur la carte ou utilisez votre position actuelle.`,
+      `La ville a été changée vers ${city}. Utilisez votre position actuelle ou ajustez la position sur la carte.`,
     )
   }
 
@@ -564,1146 +1166,2174 @@ function AddressForm({
     setLocating(true)
 
     try {
-      const permission = await Location.requestForegroundPermissionsAsync()
+      const permission =
+        await Location.requestForegroundPermissionsAsync()
 
-      if (permission.status !== Location.PermissionStatus.GRANTED) {
+      if (
+        permission.status !==
+        Location.PermissionStatus.GRANTED
+      ) {
         setLocationError(
           "L'autorisation de localisation est nécessaire pour enregistrer une adresse de livraison précise.",
         )
         return
       }
 
-      const position = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
-      })
+      const position =
+        await Location.getCurrentPositionAsync(
+          {
+            accuracy:
+              Location.Accuracy.High,
+          },
+        )
 
       const nextCoordinates = {
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
+        latitude:
+          position.coords.latitude,
+        longitude:
+          position.coords.longitude,
       }
 
-      setCoordinates(nextCoordinates)
+      setCoordinates(
+        nextCoordinates,
+      )
       setManualMapOpen(false)
       setManualCoordinates(null)
 
-      // Reverse geocoding improves the form when the service is available,
-      // but a failure here never discards the valid GPS coordinates.
       try {
-        const results = await Location.reverseGeocodeAsync(nextCoordinates)
-        const result = results[0]
+        const results =
+          await Location.reverseGeocodeAsync(
+            nextCoordinates,
+          )
+
+        const result =
+          results[0]
 
         if (result) {
-          const street = [result.streetNumber, result.street ?? result.name]
+          const street = [
+            result.streetNumber,
+            result.street ??
+              result.name,
+          ]
             .filter(Boolean)
             .join(' ')
             .trim()
 
-          const city = result.city ?? result.district ?? result.subregion
+          const city =
+            result.city ??
+            result.district ??
+            result.subregion
 
-          setForm((current) => ({
-            ...current,
-            street: current.street.trim() || street || current.street,
-            city: city || current.city,
-            postal_code:
-              current.postal_code.trim() ||
-              result.postalCode ||
-              current.postal_code,
-          }))
+          setForm(
+            (current) => ({
+              ...current,
+              street:
+                current.street.trim() ||
+                street ||
+                current.street,
+              city:
+                city ||
+                current.city,
+              postal_code:
+                current.postal_code.trim() ||
+                result.postalCode ||
+                current.postal_code,
+            }),
+          )
         }
       } catch {
-        // The GPS point is still valid even if address lookup is unavailable.
+        // GPS coordinates remain valid if reverse geocoding is unavailable.
       }
     } catch {
       setLocationError(
-        "Impossible d'obtenir votre position. Activez le GPS, placez-vous près d'une fenêtre et réessayez.",
+        "Impossible d'obtenir votre position. Activez le GPS puis réessayez.",
       )
     } finally {
       setLocating(false)
     }
   }
 
-  async function handleSubmit() {
+  function validateStepOne() {
+    setError('')
+
     if (!form.street.trim()) {
-      setError('Veuillez saisir la rue et le numéro.')
-      return
+      setError(
+        'Veuillez saisir la rue et le numéro.',
+      )
+      return false
     }
 
     if (!form.city.trim()) {
-      setError('Veuillez sélectionner une ville.')
-      return
+      setError(
+        'Veuillez sélectionner une ville.',
+      )
+      return false
     }
 
     if (!coordinates) {
       setError(
-        'Ajoutez la position GPS de cette adresse avant de l’enregistrer.',
+        'Ajoutez la position GPS de cette adresse avant de continuer.',
       )
+      return false
+    }
+
+    return true
+  }
+
+  function continueToConfirmation() {
+    if (!validateStepOne()) {
       return
     }
 
-    setError('')
+    setStep(2)
+  }
+
+  async function handleSubmit() {
+    if (!validateStepOne()) {
+      setStep(1)
+      return
+    }
+
+    if (!coordinates) {
+      return
+    }
+
     setSaving(true)
 
     try {
-      const payload: CreateAddressPayload = {
-        label: form.label,
-        street: form.street.trim(),
-        city: form.city.trim(),
-        postal_code: form.postal_code.trim() || undefined,
-        latitude: normalizeCoordinate(coordinates.latitude),
-        longitude: normalizeCoordinate(coordinates.longitude),
-        is_default: form.is_default,
-      }
+      const payload:
+        CreateAddressPayload = {
+          label: form.label,
+          street:
+            form.street.trim(),
+          city:
+            form.city.trim(),
+          postal_code:
+            form.postal_code.trim() ||
+            undefined,
+          latitude:
+            normalizeCoordinate(
+              coordinates.latitude,
+            ),
+          longitude:
+            normalizeCoordinate(
+              coordinates.longitude,
+            ),
+          is_default:
+            form.is_default,
+        }
 
       if (initial) {
-        await addressesApi.update(initial.id, payload)
+        await addressesApi.update(
+          initial.id,
+          payload,
+        )
       } else {
-        await addressesApi.create(payload)
+        await addressesApi.create(
+          payload,
+        )
       }
 
       onSaved()
     } catch (submitError) {
       setError(
-        firstError(submitError) || 'Erreur lors de la sauvegarde.',
+        firstError(
+          submitError,
+        ) ||
+          'Erreur lors de la sauvegarde.',
       )
     } finally {
       setSaving(false)
     }
   }
 
+  const previewCoordinates =
+    manualMapOpen &&
+    manualCoordinates
+      ? manualCoordinates
+      : coordinates ??
+        cityCenter()
+
   return (
-    <ScrollView
-      style={styles.screen}
-      contentContainerStyle={styles.content}
-      keyboardShouldPersistTaps="handled"
-    >
-      <View style={styles.formHeader}>
-        <View style={styles.headerTextContainer}>
-          <Text style={styles.title}>
-            {initial ? "Modifier l'adresse" : 'Nouvelle adresse'}
-          </Text>
-          <Text style={styles.subtitle}>
-            {initial
-              ? `${initial.label} · Mettez à jour les informations et la position GPS.`
-              : 'Ajoutez les informations et enregistrez la position GPS exacte.'}
-          </Text>
-        </View>
-        <Pressable style={styles.closeButton} onPress={onClose}>
-          <Icon name="close" size={20} color={colors.textMuted} />
-        </Pressable>
-      </View>
+    <View style={styles.screen}>
+      <StatusBar style="light" />
 
-      <View style={styles.fieldGroup}>
-        <Text style={styles.fieldLabel}>Étiquette *</Text>
-        <View style={styles.chipRow}>
-          {LABEL_OPTIONS.map((option) => {
-            const active = form.label === option.value
+      <ScrollView
+        style={styles.screen}
+        contentContainerStyle={[
+          styles.formContent,
+          {
+            paddingBottom:
+              Math.max(
+                insets.bottom,
+                12,
+              ) + 24,
+          },
+        ]}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={
+          false
+        }
+      >
+        <LinearGradient
+          colors={[
+            NAVY,
+            BLUE,
+            BRIGHT_BLUE,
+            CYAN,
+          ]}
+          start={{ x: 0, y: 0.1 }}
+          end={{ x: 1, y: 0.9 }}
+          style={[
+            styles.formHero,
+            {
+              paddingTop:
+                insets.top + 12,
+            },
+          ]}
+        >
+          <View
+            style={
+              styles.formHeroRow
+            }
+          >
+            <Pressable
+              style={styles.heroBack}
+              onPress={() => {
+                if (step === 2) {
+                  setStep(1)
+                  setError('')
+                  return
+                }
 
-            return (
-              <Pressable
-                key={option.value}
-                style={[
-                  styles.optionChip,
-                  active && styles.optionChipActive,
-                ]}
-                onPress={() =>
-                  setForm((current) => ({
-                    ...current,
-                    label: option.value,
-                  }))
+                onClose()
+              }}
+            >
+              <Icon
+                name="arrow_back"
+                size={21}
+                color="#ffffff"
+              />
+            </Pressable>
+
+            <View
+              style={
+                styles.formHeroText
+              }
+            >
+              <Text
+                style={
+                  styles.formHeroTitle
                 }
               >
+                {initial
+                  ? "Modifier l'adresse"
+                  : 'Ajouter une adresse'}
+              </Text>
+
+              <Text
+                style={
+                  styles.formHeroSubtitle
+                }
+              >
+                Étape {step} sur 2
+              </Text>
+            </View>
+          </View>
+        </LinearGradient>
+
+        <View
+          style={
+            styles.formProgressCard
+          }
+        >
+          <View
+            style={
+              styles.formProgressItem
+            }
+          >
+            <View
+              style={[
+                styles.formProgressCircle,
+                styles.formProgressCircleActive,
+              ]}
+            >
+              {step === 2 ? (
                 <Icon
-                  name={option.icon}
-                  size={15}
-                  color={active ? colors.white : colors.textSecondary}
+                  name="check"
+                  size={16}
+                  color="#ffffff"
                 />
+              ) : (
                 <Text
-                  style={[
-                    styles.optionChipText,
-                    active && styles.optionChipTextActive,
-                  ]}
-                >
-                  {option.value}
-                </Text>
-              </Pressable>
-            )
-          })}
-        </View>
-      </View>
-
-      <View style={styles.locationSection}>
-        <View style={styles.locationHeader}>
-          <View style={styles.locationHeaderIcon}>
-            <Icon name="my_location" size={21} color={colors.primary} />
-          </View>
-          <View style={styles.locationHeaderText}>
-            <Text style={styles.locationTitle}>Position GPS *</Text>
-            <Text style={styles.locationDescription}>
-              Utilisez votre position actuelle ou choisissez une autre adresse
-              précisément sur la carte.
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.locationButtons}>
-          <Pressable
-            style={[
-              styles.locationButton,
-              locating && styles.buttonDisabled,
-            ]}
-            onPress={() => void useCurrentLocation()}
-            disabled={locating}
-          >
-            {locating ? (
-              <ActivityIndicator size="small" color={colors.white} />
-            ) : (
-              <Icon name="gps_fixed" size={18} color={colors.white} />
-            )}
-            <Text style={styles.locationButtonText}>
-              {locating
-                ? 'Recherche de votre position…'
-                : 'Utiliser ma position actuelle'}
-            </Text>
-          </Pressable>
-
-          <Pressable
-            style={styles.manualLocationButton}
-            onPress={openManualMap}
-            disabled={locating}
-          >
-            <Icon name="map" size={18} color={colors.primary} />
-            <Text style={styles.manualLocationButtonText}>
-              Choisir la position sur la carte
-            </Text>
-          </Pressable>
-        </View>
-
-        {locationError ? (
-          <View style={styles.inlineWarning}>
-            <Icon name="warning" size={18} color="#b45309" />
-            <Text style={styles.inlineWarningText}>{locationError}</Text>
-          </View>
-        ) : null}
-
-        {manualMapOpen && manualCoordinates ? (
-          <View style={styles.manualMapPanel}>
-            <View style={styles.manualMapHeader}>
-              <View style={styles.manualMapHeaderText}>
-                <Text style={styles.manualMapTitle}>
-                  Positionnez votre adresse
-                </Text>
-                <Text style={styles.manualMapDescription}>
-                  Touchez la carte ou déplacez le marqueur jusqu'à l'entrée
-                  exacte du bâtiment.
-                </Text>
-              </View>
-
-              <Pressable
-                style={styles.cityCenterButton}
-                onPress={centerManualMapOnCity}
-              >
-                <Icon name="location_city" size={15} color={colors.primary} />
-                <Text style={styles.cityCenterButtonText}>
-                  Centrer sur {form.city}
-                </Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.manualMapContainer}>
-              <MapView
-                key={manualMapKey}
-                style={styles.map}
-                initialRegion={mapRegionFor(manualCoordinates)}
-                onPress={(event) =>
-                  setManualCoordinates(event.nativeEvent.coordinate)
-                }
-                rotateEnabled={false}
-                pitchEnabled={false}
-                toolbarEnabled={false}
-              >
-                <Marker
-                  coordinate={manualCoordinates}
-                  draggable
-                  title="Adresse de livraison"
-                  description="Déplacez ce marqueur si nécessaire"
-                  onDragEnd={(event) =>
-                    setManualCoordinates(event.nativeEvent.coordinate)
+                  style={
+                    styles.formProgressNumberActive
                   }
-                />
-              </MapView>
+                >
+                  1
+                </Text>
+              )}
             </View>
 
-            <View style={styles.manualCoordinatesRow}>
-              <Icon name="place" size={16} color={colors.primary} />
-              <Text style={styles.manualCoordinatesText}>
-                {formatCoordinates(manualCoordinates)}
+            <Text
+              style={
+                styles.formProgressLabelActive
+              }
+            >
+              Informations
+            </Text>
+
+            <View
+              style={[
+                styles.formProgressLine,
+                step === 2 &&
+                  styles.formProgressLineActive,
+              ]}
+            />
+          </View>
+
+          <View
+            style={
+              styles.formProgressItem
+            }
+          >
+            <View
+              style={[
+                styles.formProgressCircle,
+                step === 2 &&
+                  styles.formProgressCircleActive,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.formProgressNumber,
+                  step === 2 &&
+                    styles.formProgressNumberActive,
+                ]}
+              >
+                2
               </Text>
             </View>
 
-            <View style={styles.manualMapActions}>
-              <Pressable
-                style={styles.manualCancelButton}
-                onPress={cancelManualLocation}
-              >
-                <Text style={styles.manualCancelButtonText}>Annuler</Text>
-              </Pressable>
-
-              <Pressable
-                style={styles.manualConfirmButton}
-                onPress={confirmManualLocation}
-              >
-                <Icon name="check" size={17} color={colors.white} />
-                <Text style={styles.manualConfirmButtonText}>
-                  Confirmer cette position
-                </Text>
-              </Pressable>
-            </View>
+            <Text
+              style={[
+                styles.formProgressLabel,
+                step === 2 &&
+                  styles.formProgressLabelActive,
+              ]}
+            >
+              Confirmation
+            </Text>
           </View>
-        ) : coordinates ? (
-          <View style={styles.locationSuccess}>
-            <View style={styles.locationSuccessRow}>
-              <Icon name="check_circle" size={18} color="#047857" />
-              <View style={styles.locationSuccessTextContainer}>
-                <Text style={styles.locationSuccessTitle}>
-                  Position GPS enregistrée
-                </Text>
-                <Text style={styles.coordinateText}>
-                  {formatCoordinates(coordinates)}
-                </Text>
+        </View>
+
+        {step === 1 ? (
+          <>
+            <View
+              style={
+                styles.formSectionCard
+              }
+            >
+              <Text
+                style={
+                  styles.formSectionTitle
+                }
+              >
+                Informations de
+                l’adresse
+              </Text>
+
+              <Text
+                style={
+                  styles.fieldLabel
+                }
+              >
+                Nom de l’adresse
+              </Text>
+
+              <View
+                style={
+                  styles.labelOptions
+                }
+              >
+                {LABEL_OPTIONS.map(
+                  (option) => {
+                    const active =
+                      form.label ===
+                      option.value
+
+                    return (
+                      <Pressable
+                        key={
+                          option.value
+                        }
+                        style={[
+                          styles.labelOption,
+                          active &&
+                            styles.labelOptionActive,
+                        ]}
+                        onPress={() =>
+                          setForm(
+                            (current) => ({
+                              ...current,
+                              label:
+                                option.value,
+                            }),
+                          )
+                        }
+                      >
+                        <Icon
+                          name={
+                            option.icon
+                          }
+                          size={17}
+                          color={
+                            active
+                              ? BLUE
+                              : '#708096'
+                          }
+                        />
+
+                        <Text
+                          style={[
+                            styles.labelOptionText,
+                            active &&
+                              styles.labelOptionTextActive,
+                          ]}
+                        >
+                          {
+                            option.value
+                          }
+                        </Text>
+                      </Pressable>
+                    )
+                  },
+                )}
+              </View>
+
+              <Text
+                style={
+                  styles.fieldLabel
+                }
+              >
+                Adresse *
+              </Text>
+
+              <View
+                style={
+                  styles.inputShell
+                }
+              >
+                <Icon
+                  name="location_on"
+                  size={20}
+                  color="#7e8ba0"
+                />
+
+                <TextInput
+                  value={form.street}
+                  onChangeText={(
+                    value,
+                  ) => {
+                    setForm(
+                      (current) => ({
+                        ...current,
+                        street:
+                          value,
+                      }),
+                    )
+                    setError('')
+                  }}
+                  placeholder="123 Avenue Hassan II"
+                  placeholderTextColor="#99a5b6"
+                  style={
+                    styles.input
+                  }
+                  autoCapitalize="sentences"
+                />
+              </View>
+
+              <View
+                style={
+                  styles.cityPostalRow
+                }
+              >
+                <View
+                  style={
+                    styles.cityField
+                  }
+                >
+                  <Text
+                    style={
+                      styles.fieldLabel
+                    }
+                  >
+                    Ville *
+                  </Text>
+
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={
+                      false
+                    }
+                    contentContainerStyle={
+                      styles.cityChips
+                    }
+                  >
+                    {cityOptions.map(
+                      (city) => {
+                        const active =
+                          form.city ===
+                          city
+
+                        return (
+                          <Pressable
+                            key={
+                              city
+                            }
+                            style={[
+                              styles.cityChip,
+                              active &&
+                                styles.cityChipActive,
+                            ]}
+                            onPress={() =>
+                              selectCity(
+                                city,
+                              )
+                            }
+                          >
+                            <Text
+                              style={[
+                                styles.cityChipText,
+                                active &&
+                                  styles.cityChipTextActive,
+                              ]}
+                            >
+                              {city}
+                            </Text>
+                          </Pressable>
+                        )
+                      },
+                    )}
+                  </ScrollView>
+                </View>
+              </View>
+
+              <Text
+                style={
+                  styles.fieldLabel
+                }
+              >
+                Code postal
+              </Text>
+
+              <View
+                style={
+                  styles.inputShell
+                }
+              >
+                <Icon
+                  name="markunread_mailbox"
+                  size={20}
+                  color="#7e8ba0"
+                />
+
+                <TextInput
+                  value={
+                    form.postal_code
+                  }
+                  onChangeText={(
+                    value,
+                  ) => {
+                    setForm(
+                      (current) => ({
+                        ...current,
+                        postal_code:
+                          value,
+                      }),
+                    )
+                    setError('')
+                  }}
+                  placeholder="20000"
+                  placeholderTextColor="#99a5b6"
+                  keyboardType="number-pad"
+                  style={
+                    styles.input
+                  }
+                />
               </View>
             </View>
 
-            <View style={styles.mapContainer}>
-              <MapView
-                style={styles.map}
-                initialRegion={{
-                  ...coordinates,
-                  latitudeDelta: 0.008,
-                  longitudeDelta: 0.008,
-                }}
-                region={{
-                  ...coordinates,
-                  latitudeDelta: 0.008,
-                  longitudeDelta: 0.008,
-                }}
-                scrollEnabled={false}
-                zoomEnabled={false}
-                rotateEnabled={false}
-                pitchEnabled={false}
-                toolbarEnabled={false}
+            <View
+              style={
+                styles.formSectionCard
+              }
+            >
+              <Text
+                style={
+                  styles.formSectionTitle
+                }
               >
-                <Marker
-                  coordinate={coordinates}
-                  title="Adresse de livraison"
-                  description={form.street || 'Position sélectionnée'}
-                />
-              </MapView>
-            </View>
-          </View>
-        ) : (
-          <View style={styles.locationMissing}>
-            <Icon name="location_off" size={18} color="#b45309" />
-            <Text style={styles.locationMissingText}>
-              Aucune position enregistrée. Utilisez votre position actuelle
-              ou choisissez manuellement l'adresse sur la carte.
-            </Text>
-          </View>
-        )}
-      </View>
+                Position GPS
+              </Text>
 
-      <View style={styles.fieldGroup}>
-        <Text style={styles.fieldLabel}>Rue et numéro *</Text>
-        <TextInput
-          value={form.street}
-          onChangeText={(value) =>
-            setForm((current) => ({ ...current, street: value }))
-          }
-          placeholder="12 Rue Ibn Sina, Appartement 3B"
-          placeholderTextColor={colors.textMuted}
-          style={styles.textInput}
-          autoCapitalize="sentences"
-        />
-      </View>
-
-      <View style={styles.fieldGroup}>
-        <Text style={styles.fieldLabel}>Ville *</Text>
-        <View style={styles.chipRow}>
-          {cityOptions.map((city) => {
-            const active = form.city === city
-
-            return (
               <Pressable
-                key={city}
-                style={[
-                  styles.optionChip,
-                  active && styles.optionChipActive,
-                ]}
-                onPress={() => selectCity(city)}
+                style={
+                  styles.currentLocationCard
+                }
+                onPress={() => {
+                  void useCurrentLocation()
+                }}
+                disabled={locating}
               >
-                <Text
+                <View
+                  style={
+                    styles.currentLocationIcon
+                  }
+                >
+                  {locating ? (
+                    <ActivityIndicator
+                      size="small"
+                      color={BLUE}
+                    />
+                  ) : (
+                    <Icon
+                      name="my_location"
+                      size={24}
+                      color={BLUE}
+                    />
+                  )}
+                </View>
+
+                <View
+                  style={
+                    styles.currentLocationText
+                  }
+                >
+                  <Text
+                    style={
+                      styles.currentLocationTitle
+                    }
+                  >
+                    Utiliser ma position
+                    actuelle
+                  </Text>
+
+                  <Text
+                    style={
+                      styles.currentLocationSubtitle
+                    }
+                  >
+                    Remplir
+                    automatiquement avec
+                    votre position GPS
+                  </Text>
+                </View>
+
+                <View
                   style={[
-                    styles.optionChipText,
-                    active && styles.optionChipTextActive,
+                    styles.switchTrack,
+                    coordinates &&
+                      styles.switchTrackActive,
                   ]}
                 >
-                  {city}
-                </Text>
+                  <View
+                    style={[
+                      styles.switchThumb,
+                      coordinates &&
+                        styles.switchThumbActive,
+                    ]}
+                  />
+                </View>
               </Pressable>
-            )
-          })}
-        </View>
-      </View>
 
-      <View style={styles.fieldGroup}>
-        <Text style={styles.fieldLabel}>Code postal</Text>
-        <TextInput
-          value={form.postal_code}
-          onChangeText={(value) =>
-            setForm((current) => ({ ...current, postal_code: value }))
-          }
-          placeholder="20250"
-          placeholderTextColor={colors.textMuted}
-          keyboardType="number-pad"
-          style={styles.textInput}
-        />
-      </View>
+              <Text
+                style={
+                  styles.mapPreviewLabel
+                }
+              >
+                Prévisualisation sur la
+                carte
+              </Text>
 
-      <Pressable
-        style={styles.checkboxRow}
-        onPress={() =>
-          setForm((current) => ({
-            ...current,
-            is_default: !current.is_default,
-          }))
-        }
-      >
-        <Icon
-          name={
-            form.is_default ? 'check_box' : 'check_box_outline_blank'
-          }
-          size={21}
-          color={form.is_default ? colors.primary : colors.textMuted}
-        />
-        <View style={styles.checkboxTextContainer}>
-          <Text style={styles.checkboxLabel}>
-            Définir comme adresse par défaut
-          </Text>
-          <Text style={styles.checkboxDescription}>
-            Elle sera présélectionnée lors de vos prochaines commandes.
-          </Text>
-        </View>
-      </Pressable>
+              <View
+                style={
+                  styles.previewMapWrap
+                }
+              >
+                <Map
+                  key={manualMapKey}
+                  style={styles.map}
+                  mapStyle={DEV_MAP_STYLE}
+                  onPress={
+                    manualMapOpen
+                      ? (event) =>
+                          setManualCoordinates(
+                            fromLngLat(
+                              event.nativeEvent.lngLat,
+                            ),
+                          )
+                      : undefined
+                  }
+                  dragPan={manualMapOpen}
+                  touchZoom={manualMapOpen}
+                  doubleTapZoom={manualMapOpen}
+                  doubleTapHoldZoom={manualMapOpen}
+                  touchRotate={false}
+                  touchPitch={false}
+                  compass={false}
+                >
+                  <Camera
+                    center={toLngLat(
+                      previewCoordinates,
+                    )}
+                    zoom={manualMapOpen ? 15 : 16}
+                  />
 
-      {error ? (
-        <View style={styles.errorBox}>
-          <Icon name="error" size={18} color={colors.errorText} />
-          <Text style={styles.errorText}>{error}</Text>
-        </View>
-      ) : null}
+                  <ViewAnnotation
+                    lngLat={toLngLat(
+                      previewCoordinates,
+                    )}
+                    draggable={manualMapOpen}
+                    onDragEnd={
+                      manualMapOpen
+                        ? (event) =>
+                            setManualCoordinates(
+                              fromLngLat(
+                                event.nativeEvent.lngLat,
+                              ),
+                            )
+                        : undefined
+                    }
+                  >
+                    <View style={styles.mapPin}>
+                      <Icon
+                        name="place"
+                        size={30}
+                        color={BLUE}
+                      />
+                    </View>
+                  </ViewAnnotation>
+                </Map>
 
-      <View style={styles.formActions}>
-        <Pressable
-          style={styles.cancelButton}
-          onPress={onClose}
-          disabled={saving}
-        >
-          <Text style={styles.cancelButtonText}>Annuler</Text>
-        </Pressable>
+                <Pressable
+                  style={
+                    styles.adjustMapButton
+                  }
+                  onPress={
+                    manualMapOpen
+                      ? confirmManualLocation
+                      : openManualMap
+                  }
+                >
+                  <Icon
+                    name={
+                      manualMapOpen
+                        ? 'check'
+                        : 'my_location'
+                    }
+                    size={17}
+                    color={BLUE}
+                  />
 
-        <Pressable
-          style={[styles.saveButton, saving && styles.buttonDisabled]}
-          onPress={() => void handleSubmit()}
-          disabled={saving}
-        >
-          {saving ? (
-            <ActivityIndicator color={colors.white} size="small" />
-          ) : (
-            <Icon name="save" size={17} color={colors.white} />
-          )}
-          <Text style={styles.saveButtonText}>
-            {saving ? 'Enregistrement…' : 'Enregistrer'}
-          </Text>
-        </Pressable>
-      </View>
-    </ScrollView>
+                  <Text
+                    style={
+                      styles.adjustMapButtonText
+                    }
+                  >
+                    {manualMapOpen
+                      ? 'Confirmer la position'
+                      : 'Ajuster sur la carte'}
+                  </Text>
+                </Pressable>
+              </View>
+
+              {manualMapOpen ? (
+                <View
+                  style={
+                    styles.manualControls
+                  }
+                >
+                  <Pressable
+                    style={
+                      styles.manualSecondaryButton
+                    }
+                    onPress={
+                      centerManualMapOnCity
+                    }
+                  >
+                    <Text
+                      style={
+                        styles.manualSecondaryButtonText
+                      }
+                    >
+                      Centrer sur{' '}
+                      {form.city}
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={
+                      styles.manualSecondaryButton
+                    }
+                    onPress={
+                      cancelManualLocation
+                    }
+                  >
+                    <Text
+                      style={
+                        styles.manualSecondaryButtonText
+                      }
+                    >
+                      Annuler
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : null}
+
+              {coordinates ? (
+                <View
+                  style={
+                    styles.coordinateSuccess
+                  }
+                >
+                  <Icon
+                    name="check_circle"
+                    size={18}
+                    color={GREEN}
+                  />
+
+                  <Text
+                    style={
+                      styles.coordinateSuccessText
+                    }
+                  >
+                    Position GPS
+                    enregistrée ·{' '}
+                    {formatCoordinates(
+                      coordinates,
+                    )}
+                  </Text>
+                </View>
+              ) : null}
+
+              {locationError ? (
+                <View
+                  style={
+                    styles.inlineWarning
+                  }
+                >
+                  <Icon
+                    name="warning"
+                    size={18}
+                    color="#b35a18"
+                  />
+
+                  <Text
+                    style={
+                      styles.inlineWarningText
+                    }
+                  >
+                    {locationError}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+
+            {error ? (
+              <View
+                style={
+                  styles.formError
+                }
+              >
+                <Icon
+                  name="error_outline"
+                  size={19}
+                  color="#b4232f"
+                />
+
+                <Text
+                  style={
+                    styles.formErrorText
+                  }
+                >
+                  {error}
+                </Text>
+              </View>
+            ) : null}
+
+            <Pressable
+              style={
+                styles.primaryFormButton
+              }
+              onPress={
+                continueToConfirmation
+              }
+            >
+              <Text
+                style={
+                  styles.primaryFormButtonText
+                }
+              >
+                Continuer
+              </Text>
+
+              <Icon
+                name="arrow_forward"
+                size={20}
+                color="#ffffff"
+              />
+            </Pressable>
+          </>
+        ) : (
+          <>
+            <View
+              style={
+                styles.formSectionCard
+              }
+            >
+              <Text
+                style={
+                  styles.formSectionTitle
+                }
+              >
+                Confirmer l’adresse
+              </Text>
+
+              <View
+                style={
+                  styles.reviewAddressCard
+                }
+              >
+                <View
+                  style={
+                    styles.reviewIcon
+                  }
+                >
+                  <Icon
+                    name={labelIcon(
+                      form.label,
+                    )}
+                    size={25}
+                    color={BLUE}
+                  />
+                </View>
+
+                <View
+                  style={
+                    styles.reviewAddressText
+                  }
+                >
+                  <Text
+                    style={
+                      styles.reviewAddressTitle
+                    }
+                  >
+                    {form.label}
+                  </Text>
+
+                  <Text
+                    style={
+                      styles.reviewAddressStreet
+                    }
+                  >
+                    {form.street}
+                  </Text>
+
+                  <Text
+                    style={
+                      styles.reviewAddressCity
+                    }
+                  >
+                    {form.city}
+                    {form.postal_code
+                      ? ` ${form.postal_code}`
+                      : ''}
+                  </Text>
+                </View>
+
+                <Pressable
+                  onPress={() =>
+                    setStep(1)
+                  }
+                >
+                  <Text
+                    style={
+                      styles.reviewEditLink
+                    }
+                  >
+                    Modifier
+                  </Text>
+                </Pressable>
+              </View>
+
+              {coordinates ? (
+                <View
+                  style={
+                    styles.reviewMapWrap
+                  }
+                >
+                  <Map
+                    style={styles.map}
+                    mapStyle={DEV_MAP_STYLE}
+                    dragPan={false}
+                    touchZoom={false}
+                    doubleTapZoom={false}
+                    doubleTapHoldZoom={false}
+                    touchRotate={false}
+                    touchPitch={false}
+                    compass={false}
+                  >
+                    <Camera
+                      center={toLngLat(
+                        coordinates,
+                      )}
+                      zoom={16}
+                    />
+
+                    <ViewAnnotation
+                      lngLat={toLngLat(
+                        coordinates,
+                      )}
+                    >
+                      <View style={styles.mapPin}>
+                        <Icon
+                          name="place"
+                          size={30}
+                          color={BLUE}
+                        />
+                      </View>
+                    </ViewAnnotation>
+                  </Map>
+                </View>
+              ) : null}
+
+              <Pressable
+                style={
+                  styles.defaultToggleRow
+                }
+                onPress={() =>
+                  setForm(
+                    (current) => ({
+                      ...current,
+                      is_default:
+                        !current.is_default,
+                    }),
+                  )
+                }
+              >
+                <View
+                  style={
+                    styles.defaultToggleText
+                  }
+                >
+                  <Text
+                    style={
+                      styles.defaultToggleTitle
+                    }
+                  >
+                    Définir comme adresse
+                    par défaut
+                  </Text>
+
+                  <Text
+                    style={
+                      styles.defaultToggleSubtitle
+                    }
+                  >
+                    Elle sera
+                    présélectionnée lors
+                    de vos prochaines
+                    commandes.
+                  </Text>
+                </View>
+
+                <View
+                  style={[
+                    styles.switchTrack,
+                    form.is_default &&
+                      styles.switchTrackActive,
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.switchThumb,
+                      form.is_default &&
+                        styles.switchThumbActive,
+                    ]}
+                  />
+                </View>
+              </Pressable>
+            </View>
+
+            {error ? (
+              <View
+                style={
+                  styles.formError
+                }
+              >
+                <Icon
+                  name="error_outline"
+                  size={19}
+                  color="#b4232f"
+                />
+
+                <Text
+                  style={
+                    styles.formErrorText
+                  }
+                >
+                  {error}
+                </Text>
+              </View>
+            ) : null}
+
+            <Pressable
+              style={[
+                styles.primaryFormButton,
+                saving &&
+                  styles.disabled,
+              ]}
+              onPress={() => {
+                void handleSubmit()
+              }}
+              disabled={saving}
+            >
+              {saving ? (
+                <ActivityIndicator
+                  size="small"
+                  color="#ffffff"
+                />
+              ) : (
+                <Icon
+                  name="save"
+                  size={19}
+                  color="#ffffff"
+                />
+              )}
+
+              <Text
+                style={
+                  styles.primaryFormButtonText
+                }
+              >
+                {saving
+                  ? 'Enregistrement…'
+                  : initial
+                    ? 'Enregistrer les modifications'
+                    : 'Enregistrer cette adresse'}
+              </Text>
+            </Pressable>
+          </>
+        )}
+      </ScrollView>
+    </View>
   )
 }
 
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: colors.surface,
+    backgroundColor: SURFACE,
   },
-  content: {
-    padding: 16,
-    gap: 16,
-    paddingBottom: 40,
+
+  listContent: {
+    backgroundColor: SURFACE,
   },
-  centerScreen: {
-    flex: 1,
+
+  hero: {
+    minHeight: 188,
+    paddingHorizontal: 18,
+    paddingBottom: 34,
+    borderBottomLeftRadius: 34,
+    borderBottomRightRadius: 34,
+  },
+
+  heroRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  heroBack: {
+    width: 46,
+    height: 46,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 12,
-    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.45)',
+    borderRadius: 15,
+    backgroundColor: 'rgba(255,255,255,0.08)',
   },
-  loadingText: {
-    color: colors.textSecondary,
-    fontSize: 13,
+
+  heroText: {
+    flex: 1,
+    marginLeft: 14,
   },
-  headerRow: {
+
+  heroTitle: {
+    color: '#ffffff',
+    fontSize: 28,
+    fontWeight: '900',
+    letterSpacing: -0.55,
+  },
+
+  heroSubtitle: {
+    marginTop: 4,
+    color: '#eaf7ff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
+  heroAdd: {
+    width: 50,
+    height: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.42)',
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+
+  safeNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 16,
+    marginTop: -18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 23,
+    backgroundColor: '#ffffff',
+    shadowColor: '#0b1f4d',
+    shadowOffset: {
+      width: 0,
+      height: 7,
+    },
+    shadowOpacity: 0.08,
+    shadowRadius: 15,
+    elevation: 4,
+  },
+
+  safeNoticeIcon: {
+    width: 50,
+    height: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+    borderRadius: 17,
+    backgroundColor: '#edf4ff',
+  },
+
+  safeNoticeText: {
+    flex: 1,
+  },
+
+  safeNoticeTitle: {
+    color: TEXT,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+
+  safeNoticeSubtitle: {
+    marginTop: 3,
+    color: MUTED,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+
+  safeNoticeShield: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 15,
+    backgroundColor: '#f3f7ff',
+  },
+
+  sectionHeading: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingTop: 24,
+    paddingBottom: 12,
+  },
+
+  sectionHeadingTitle: {
+    color: TEXT,
+    fontSize: 18,
+    fontWeight: '900',
+  },
+
+  sectionHeadingSubtitle: {
+    marginTop: 3,
+    color: MUTED,
+    fontSize: 11,
+  },
+
+  stateCard: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 16,
+    paddingHorizontal: 24,
+    paddingVertical: 34,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 22,
+    backgroundColor: '#ffffff',
+  },
+
+  errorStateIcon: {
+    width: 60,
+    height: 60,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 20,
+    backgroundColor: '#fff1f2',
+  },
+
+  emptyStateIcon: {
+    width: 60,
+    height: 60,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 20,
+    backgroundColor: '#edf4ff',
+  },
+
+  stateTitle: {
+    marginTop: 13,
+    color: TEXT,
+    fontSize: 16,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+
+  stateText: {
+    marginTop: 6,
+    color: MUTED,
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'center',
+  },
+
+  retryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    marginTop: 15,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+    borderRadius: 13,
+    backgroundColor: BLUE,
+  },
+
+  retryButtonText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+
+  addressList: {
+    gap: 13,
+    paddingHorizontal: 16,
+  },
+
+  addressCard: {
+    padding: 15,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 22,
+    backgroundColor: '#ffffff',
+    shadowColor: '#0b1f4d',
+    shadowOffset: {
+      width: 0,
+      height: 6,
+    },
+    shadowOpacity: 0.07,
+    shadowRadius: 13,
+    elevation: 3,
+  },
+
+  addressCardDefault: {
+    borderColor: '#4d78ff',
+    borderWidth: 1.5,
+  },
+
+  addressTopRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
   },
-  headerTextContainer: {
-    flex: 1,
-  },
-  title: {
-    fontSize: 23,
-    fontWeight: '700',
-    color: colors.primary,
-  },
-  subtitle: {
-    fontSize: 13,
-    lineHeight: 19,
-    color: colors.textSecondary,
-    marginTop: 4,
-  },
-  addressCount: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.primary,
-    marginTop: 6,
-  },
-  addButton: {
-    flexDirection: 'row',
+
+  addressLabelIcon: {
+    width: 58,
+    height: 58,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    backgroundColor: colors.primary,
-    paddingVertical: 14,
-    borderRadius: 14,
+    marginRight: 12,
+    borderRadius: 20,
+    backgroundColor: '#eef4ff',
   },
-  addButtonText: {
-    color: colors.white,
-    fontWeight: '600',
-    fontSize: 14,
+
+  addressMain: {
+    flex: 1,
+    minWidth: 0,
   },
-  buttonDisabled: {
-    opacity: 0.55,
-  },
-  errorState: {
-    alignItems: 'center',
-    gap: 9,
-    paddingHorizontal: 22,
-    paddingVertical: 32,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#fecaca',
-    backgroundColor: colors.errorBg,
-  },
-  errorStateTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: colors.errorText,
-  },
-  errorStateText: {
-    fontSize: 13,
-    lineHeight: 19,
-    textAlign: 'center',
-    color: colors.errorText,
-  },
-  retryButton: {
-    marginTop: 4,
+
+  addressTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 7,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: colors.primary,
   },
-  retryButtonText: {
-    color: colors.white,
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  emptyState: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 44,
-    paddingHorizontal: 26,
-    gap: 10,
-    backgroundColor: colors.surfaceLowest,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.outlineVariant,
-  },
-  emptyIcon: {
-    width: 66,
-    height: 66,
-    borderRadius: 33,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#eff6ff',
-  },
-  emptyTitle: {
+
+  addressLabel: {
+    flexShrink: 1,
+    color: TEXT,
     fontSize: 16,
-    fontWeight: '700',
-    color: colors.textPrimary,
+    fontWeight: '900',
   },
-  emptyText: {
-    fontSize: 13,
-    lineHeight: 19,
-    textAlign: 'center',
-    color: colors.textSecondary,
-  },
-  cardsContainer: {
-    gap: 14,
-  },
-  addressCard: {
-    backgroundColor: colors.surfaceLowest,
-    borderRadius: 15,
-    borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    borderLeftWidth: 4,
-    borderLeftColor: colors.outlineVariant,
-    padding: 16,
-    gap: 8,
-  },
-  addressCardDefault: {
-    borderLeftColor: colors.primary,
-  },
-  addressCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
-  labelChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: colors.surface,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 999,
-  },
-  labelChipDefault: {
-    backgroundColor: colors.primary,
-  },
-  labelChipText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textSecondary,
-  },
-  labelChipTextActive: {
-    color: colors.white,
-  },
+
   defaultBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#ecfdf5',
     paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#a7f3d0',
-  },
-  defaultBadgeText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#047857',
-  },
-  cardHeaderSpacer: {
-    flex: 1,
-  },
-  iconButton: {
-    width: 34,
-    height: 34,
-    alignItems: 'center',
-    justifyContent: 'center',
+    paddingVertical: 5,
     borderRadius: 9,
-    backgroundColor: colors.surface,
+    backgroundColor: BLUE,
   },
+
+  defaultBadgeText: {
+    color: '#ffffff',
+    fontSize: 9,
+    fontWeight: '900',
+  },
+
+  currentBadge: {
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 9,
+    backgroundColor: '#eaf9f0',
+  },
+
+  currentBadgeText: {
+    color: '#16834f',
+    fontSize: 9,
+    fontWeight: '900',
+  },
+
   addressStreet: {
-    fontSize: 15,
-    lineHeight: 21,
-    fontWeight: '600',
-    color: colors.textPrimary,
-  },
-  addressCity: {
+    marginTop: 8,
+    color: '#344966',
     fontSize: 13,
-    color: colors.textSecondary,
-    marginTop: -3,
+    lineHeight: 18,
+    fontWeight: '700',
   },
-  gpsStatus: {
+
+  addressCity: {
+    marginTop: 2,
+    color: MUTED,
+    fontSize: 12,
+  },
+
+  gpsLine: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 7,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 10,
-    marginTop: 4,
+    gap: 5,
+    marginTop: 8,
   },
-  gpsStatusSuccess: {
-    backgroundColor: '#ecfdf5',
+
+  gpsLineText: {
+    color: GREEN,
+    fontSize: 10,
+    fontWeight: '800',
   },
-  gpsStatusWarning: {
-    backgroundColor: '#fffbeb',
+
+  gpsWarningText: {
+    color: '#b35a18',
   },
-  gpsStatusText: {
-    flex: 1,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  addressFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    marginTop: 4,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: colors.outlineVariant,
-  },
-  addressFooterLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  addressFooterText: {
-    fontSize: 12,
-    color: colors.textMuted,
-  },
-  setDefaultLink: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.primary,
-  },
-  setDefaultDisabled: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: colors.textMuted,
-  },
-  dashedAdd: {
-    borderWidth: 2,
-    borderColor: colors.outlineVariant,
-    borderStyle: 'dashed',
-    borderRadius: 14,
-    paddingVertical: 23,
-    alignItems: 'center',
-    gap: 10,
-  },
-  dashedAddIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#ecfeff',
+
+  defaultSelector: {
+    width: 40,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
+    marginLeft: 6,
   },
-  dashedAddText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.accentLight,
+
+  defaultSelectorActive: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    backgroundColor: BLUE,
   },
-  limitStrip: {
+
+  defaultSelectorInner: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: '#ffffff',
+  },
+
+  defaultSelectorInactive: {
+    width: 24,
+    height: 24,
+    borderWidth: 2,
+    borderColor: '#aeb9ca',
+    borderRadius: 12,
+  },
+
+  addressActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    backgroundColor: '#eff6ff',
-    borderWidth: 1,
-    borderColor: '#dbeafe',
-    borderRadius: 14,
-    padding: 14,
+    marginTop: 15,
+    paddingTop: 13,
+    borderTopWidth: 1,
+    borderTopColor: '#e7edf5',
   },
-  limitInformation: {
+
+  addressAction: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'center',
+    gap: 7,
+    minHeight: 34,
   },
+
+  addressActionEdit: {
+    color: BLUE,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+
+  addressActionDelete: {
+    color: RED,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+
+  actionDivider: {
+    width: 1,
+    height: 24,
+    backgroundColor: '#dfe6ef',
+  },
+
+  addAddressButton: {
+    minHeight: 54,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 16,
+    borderRadius: 16,
+    backgroundColor: BLUE,
+  },
+
+  addAddressButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+
+  limitCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 16,
+    marginTop: 14,
+    padding: 14,
+    borderRadius: 18,
+    backgroundColor: '#eef4ff',
+  },
+
+  limitIcon: {
+    width: 38,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    borderRadius: 13,
+    backgroundColor: '#ffffff',
+  },
+
   limitText: {
     flex: 1,
-    fontSize: 12,
-    lineHeight: 17,
-    color: colors.primary,
   },
+
+  limitTitle: {
+    color: TEXT,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+
+  limitSubtitle: {
+    marginTop: 3,
+    color: MUTED,
+    fontSize: 10,
+    lineHeight: 14,
+  },
+
   limitDots: {
     flexDirection: 'row',
     gap: 4,
+    marginLeft: 8,
   },
+
   limitDot: {
-    width: 15,
-    height: 8,
+    width: 7,
+    height: 7,
     borderRadius: 4,
-    backgroundColor: colors.outlineVariant,
+    backgroundColor: '#c5d0e0',
   },
+
   limitDotFilled: {
-    backgroundColor: colors.accentLight,
+    backgroundColor: BLUE,
   },
-  formHeader: {
+
+  disabled: {
+    opacity: 0.55,
+  },
+
+  formContent: {
+    backgroundColor: SURFACE,
+  },
+
+  formHero: {
+    minHeight: 158,
+    paddingHorizontal: 18,
+    paddingBottom: 30,
+    borderBottomLeftRadius: 34,
+    borderBottomRightRadius: 34,
+  },
+
+  formHeroRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
+    alignItems: 'center',
   },
-  closeButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+
+  formHeroText: {
+    flex: 1,
+    marginLeft: 14,
+  },
+
+  formHeroTitle: {
+    color: '#ffffff',
+    fontSize: 24,
+    fontWeight: '900',
+    letterSpacing: -0.4,
+  },
+
+  formHeroSubtitle: {
+    marginTop: 4,
+    color: '#eaf7ff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+
+  formProgressCard: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginTop: -17,
+    marginBottom: 14,
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 22,
+    backgroundColor: '#ffffff',
+    shadowColor: '#0b1f4d',
+    shadowOffset: {
+      width: 0,
+      height: 6,
+    },
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
+    elevation: 4,
+  },
+
+  formProgressItem: {
+    flex: 1,
+    alignItems: 'center',
+    position: 'relative',
+  },
+
+  formProgressCircle: {
+    width: 32,
+    height: 32,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.surfaceLowest,
+    borderWidth: 1.5,
+    borderColor: '#acb7c8',
+    borderRadius: 16,
+    backgroundColor: '#ffffff',
+    zIndex: 2,
+  },
+
+  formProgressCircleActive: {
+    borderColor: BLUE,
+    backgroundColor: BLUE,
+  },
+
+  formProgressNumber: {
+    color: '#7c899c',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+
+  formProgressNumberActive: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+
+  formProgressLabel: {
+    marginTop: 6,
+    color: '#78869a',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+
+  formProgressLabelActive: {
+    marginTop: 6,
+    color: TEXT,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+
+  formProgressLine: {
+    position: 'absolute',
+    top: 15,
+    left: '68%',
+    width: '64%',
+    height: 2,
+    backgroundColor: '#d4dbe5',
+    zIndex: 1,
+  },
+
+  formProgressLineActive: {
+    backgroundColor: BLUE,
+  },
+
+  formSectionCard: {
+    marginHorizontal: 16,
+    marginBottom: 14,
+    padding: 16,
     borderWidth: 1,
-    borderColor: colors.outlineVariant,
+    borderColor: BORDER,
+    borderRadius: 22,
+    backgroundColor: '#ffffff',
+    shadowColor: '#0b1f4d',
+    shadowOffset: {
+      width: 0,
+      height: 5,
+    },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    elevation: 3,
   },
-  fieldGroup: {
-    gap: 8,
+
+  formSectionTitle: {
+    marginBottom: 16,
+    color: TEXT,
+    fontSize: 17,
+    fontWeight: '900',
   },
+
   fieldLabel: {
+    marginTop: 12,
+    marginBottom: 7,
+    color: '#465975',
     fontSize: 12,
-    fontWeight: '600',
-    color: colors.textSecondary,
+    fontWeight: '800',
   },
-  chipRow: {
+
+  labelOptions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
   },
-  optionChip: {
+
+  labelOption: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    paddingHorizontal: 11,
+    paddingVertical: 9,
     borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    backgroundColor: colors.surfaceLowest,
+    borderColor: '#dde5ef',
+    borderRadius: 13,
+    backgroundColor: '#f8fafc',
   },
-  optionChipActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
+
+  labelOptionActive: {
+    borderColor: '#b8ccff',
+    backgroundColor: '#edf4ff',
   },
-  optionChipText: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: colors.textPrimary,
+
+  labelOptionText: {
+    color: '#6f7e93',
+    fontSize: 11,
+    fontWeight: '800',
   },
-  optionChipTextActive: {
-    color: colors.white,
+
+  labelOptionTextActive: {
+    color: BLUE,
   },
-  locationSection: {
-    gap: 12,
-    padding: 15,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#bfdbfe',
-    backgroundColor: '#f8fbff',
-  },
-  locationHeader: {
+
+  inputShell: {
+    minHeight: 52,
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 11,
-  },
-  locationHeaderIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#dbeafe',
+    gap: 9,
+    paddingHorizontal: 13,
+    borderWidth: 1,
+    borderColor: '#d8e1ed',
+    borderRadius: 14,
+    backgroundColor: '#fbfcfe',
   },
-  locationHeaderText: {
+
+  input: {
+    flex: 1,
+    color: TEXT,
+    fontSize: 13,
+  },
+
+  cityPostalRow: {
+    flexDirection: 'row',
+  },
+
+  cityField: {
     flex: 1,
   },
-  locationTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.textPrimary,
+
+  cityChips: {
+    gap: 7,
+    paddingRight: 4,
   },
-  locationDescription: {
-    marginTop: 3,
-    fontSize: 12,
-    lineHeight: 17,
-    color: colors.textSecondary,
-  },
-  locationButtons: {
-    gap: 9,
-  },
-  manualLocationButton: {
-    minHeight: 46,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingHorizontal: 14,
-    borderRadius: 13,
+
+  cityChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 9,
     borderWidth: 1,
-    borderColor: colors.primary,
-    backgroundColor: colors.surfaceLowest,
+    borderColor: '#dce4ef',
+    borderRadius: 13,
+    backgroundColor: '#f8fafc',
   },
-  manualLocationButtonText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.primary,
+
+  cityChipActive: {
+    borderColor: BLUE,
+    backgroundColor: '#edf4ff',
   },
-  locationButton: {
-    minHeight: 46,
+
+  cityChipText: {
+    color: '#718096',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+
+  cityChipTextActive: {
+    color: BLUE,
+  },
+
+  currentLocationCard: {
+    minHeight: 78,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingHorizontal: 14,
-    borderRadius: 13,
-    backgroundColor: colors.primary,
-  },
-  locationButtonText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.white,
-  },
-  manualMapPanel: {
-    gap: 11,
     padding: 12,
-    borderRadius: 13,
-    borderWidth: 1,
-    borderColor: '#93c5fd',
-    backgroundColor: colors.surfaceLowest,
+    borderRadius: 17,
+    backgroundColor: '#f2f6ff',
   },
-  manualMapHeader: {
-    gap: 9,
-  },
-  manualMapHeaderText: {
-    gap: 3,
-  },
-  manualMapTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  manualMapDescription: {
-    fontSize: 11,
-    lineHeight: 16,
-    color: colors.textSecondary,
-  },
-  cityCenterButton: {
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
+
+  currentLocationIcon: {
+    width: 48,
+    height: 48,
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 10,
-    backgroundColor: '#eff6ff',
+    justifyContent: 'center',
+    marginRight: 10,
+    borderRadius: 16,
+    backgroundColor: '#ffffff',
   },
-  cityCenterButtonText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: colors.primary,
-  },
-  manualMapContainer: {
-    height: 260,
-    overflow: 'hidden',
-    borderRadius: 13,
-    borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    backgroundColor: colors.outlineVariant,
-  },
-  manualCoordinatesRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  manualCoordinatesText: {
-    fontSize: 11,
-    color: colors.textSecondary,
-  },
-  manualMapActions: {
-    flexDirection: 'row',
-    gap: 9,
-  },
-  manualCancelButton: {
+
+  currentLocationText: {
     flex: 1,
-    minHeight: 42,
-    alignItems: 'center',
+  },
+
+  currentLocationTitle: {
+    color: TEXT,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+
+  currentLocationSubtitle: {
+    marginTop: 3,
+    color: MUTED,
+    fontSize: 10,
+    lineHeight: 14,
+  },
+
+  switchTrack: {
+    width: 46,
+    height: 26,
     justifyContent: 'center',
-    borderRadius: 11,
-    borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    backgroundColor: colors.surfaceLowest,
+    paddingHorizontal: 3,
+    borderRadius: 13,
+    backgroundColor: '#c8d0dd',
   },
-  manualCancelButtonText: {
+
+  switchTrackActive: {
+    backgroundColor: BLUE,
+  },
+
+  switchThumb: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#ffffff',
+  },
+
+  switchThumbActive: {
+    alignSelf: 'flex-end',
+  },
+
+  mapPreviewLabel: {
+    marginTop: 15,
+    marginBottom: 8,
+    color: TEXT,
     fontSize: 12,
-    fontWeight: '600',
-    color: colors.textSecondary,
+    fontWeight: '900',
   },
-  manualConfirmButton: {
-    flex: 1.5,
-    minHeight: 42,
+
+  previewMapWrap: {
+    height: 190,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#dce4ef',
+    borderRadius: 18,
+    backgroundColor: '#eef2f6',
+  },
+
+  map: {
+    width: '100%',
+    height: '100%',
+  },
+
+  adjustMapButton: {
+    position: 'absolute',
+    right: 10,
+    bottom: 10,
+    minHeight: 38,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
     gap: 6,
-    borderRadius: 11,
-    backgroundColor: colors.primary,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#c3d2f2',
+    borderRadius: 13,
+    backgroundColor: '#ffffff',
   },
-  manualConfirmButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.white,
+
+  adjustMapButtonText: {
+    color: BLUE,
+    fontSize: 10,
+    fontWeight: '900',
   },
+
+  manualControls: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 9,
+  },
+
+  manualSecondaryButton: {
+    flex: 1,
+    minHeight: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#d6e0ee',
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
+  },
+
+  manualSecondaryButtonText: {
+    color: BLUE,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+
+  coordinateSuccess: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 13,
+    backgroundColor: '#ecfaf3',
+  },
+
+  coordinateSuccessText: {
+    flex: 1,
+    color: '#16734e',
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '700',
+  },
+
   inlineWarning: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 8,
-    padding: 11,
-    borderRadius: 11,
-    backgroundColor: '#fffbeb',
-    borderWidth: 1,
-    borderColor: '#fde68a',
+    gap: 7,
+    marginTop: 9,
+    padding: 10,
+    borderRadius: 13,
+    backgroundColor: '#fff7ed',
   },
+
   inlineWarningText: {
     flex: 1,
-    fontSize: 12,
-    lineHeight: 17,
-    color: '#92400e',
-  },
-  locationSuccess: {
-    gap: 10,
-  },
-  locationSuccessRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    padding: 11,
-    borderRadius: 11,
-    backgroundColor: '#ecfdf5',
-    borderWidth: 1,
-    borderColor: '#a7f3d0',
-  },
-  locationSuccessTextContainer: {
-    flex: 1,
-  },
-  locationSuccessTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#047857',
-  },
-  coordinateText: {
-    marginTop: 2,
-    fontSize: 11,
-    color: '#047857',
-  },
-  mapContainer: {
-    height: 180,
-    overflow: 'hidden',
-    borderRadius: 13,
-    borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    backgroundColor: colors.outlineVariant,
-  },
-  map: {
-    flex: 1,
-  },
-  locationMissing: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    padding: 11,
-    borderRadius: 11,
-    backgroundColor: '#fffbeb',
-  },
-  locationMissingText: {
-    flex: 1,
-    fontSize: 12,
-    lineHeight: 17,
-    color: '#92400e',
-  },
-  textInput: {
-    borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 14,
-    color: colors.textPrimary,
-    backgroundColor: colors.surfaceLowest,
-  },
-  checkboxRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    padding: 13,
-    borderRadius: 13,
-    borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    backgroundColor: colors.surfaceLowest,
-  },
-  checkboxTextContainer: {
-    flex: 1,
-  },
-  checkboxLabel: {
-    fontSize: 13,
+    color: '#99501b',
+    fontSize: 10,
+    lineHeight: 14,
     fontWeight: '600',
-    color: colors.textPrimary,
   },
-  checkboxDescription: {
-    marginTop: 3,
-    fontSize: 11,
-    lineHeight: 16,
-    color: colors.textSecondary,
-  },
-  errorBox: {
+
+  formError: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 8,
-    backgroundColor: colors.errorBg,
-    borderRadius: 12,
+    marginHorizontal: 16,
+    marginBottom: 12,
     padding: 12,
     borderWidth: 1,
-    borderColor: '#fecaca',
+    borderColor: '#efc2c7',
+    borderRadius: 15,
+    backgroundColor: '#fff5f6',
   },
-  errorText: {
+
+  formErrorText: {
     flex: 1,
-    color: colors.errorText,
-    fontSize: 13,
-    lineHeight: 18,
+    color: '#972b38',
+    fontSize: 10,
+    lineHeight: 15,
+    fontWeight: '600',
   },
-  formActions: {
+
+  primaryFormButton: {
+    minHeight: 54,
     flexDirection: 'row',
-    gap: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 9,
+    marginHorizontal: 16,
+    marginBottom: 16,
+    borderRadius: 16,
+    backgroundColor: BLUE,
+  },
+
+  primaryFormButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '900',
+  },
+
+  reviewAddressCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 13,
+    borderRadius: 17,
+    backgroundColor: '#f4f8ff',
+  },
+
+  reviewIcon: {
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    borderRadius: 16,
+    backgroundColor: '#e5efff',
+  },
+
+  reviewAddressText: {
+    flex: 1,
+    minWidth: 0,
+  },
+
+  reviewAddressTitle: {
+    color: TEXT,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+
+  reviewAddressStreet: {
     marginTop: 4,
+    color: '#50617a',
+    fontSize: 12,
   },
-  cancelButton: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.outlineVariant,
-    backgroundColor: colors.surfaceLowest,
+
+  reviewAddressCity: {
+    marginTop: 2,
+    color: MUTED,
+    fontSize: 11,
   },
-  cancelButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.textSecondary,
+
+  reviewEditLink: {
+    color: BLUE,
+    fontSize: 11,
+    fontWeight: '900',
   },
-  saveButton: {
-    flex: 1,
+
+  reviewMapWrap: {
+    height: 170,
+    overflow: 'hidden',
+    marginTop: 13,
+    borderRadius: 17,
+    backgroundColor: '#eef2f6',
+  },
+
+  defaultToggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginTop: 13,
+    padding: 13,
+    borderRadius: 16,
+    backgroundColor: '#f8fafc',
+  },
+
+  defaultToggleText: {
+    flex: 1,
+    marginRight: 10,
+  },
+
+  defaultToggleTitle: {
+    color: TEXT,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+
+  defaultToggleSubtitle: {
+    marginTop: 3,
+    color: MUTED,
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  mapPin: {
+    width: 38,
+    height: 38,
+    alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    backgroundColor: colors.primary,
-    borderRadius: 14,
-    paddingVertical: 14,
+    borderRadius: 19,
+    backgroundColor: '#ffffff',
+    shadowColor: '#00184d',
+    shadowOffset: {
+      width: 0,
+      height: 3,
+    },
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+    elevation: 5,
   },
-  saveButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.white,
-  },
+
 })

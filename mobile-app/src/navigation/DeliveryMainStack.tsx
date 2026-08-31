@@ -4,6 +4,7 @@ import type { DeliveryMainStackParamList } from './types'
 
 import DeliveryTabs from './DeliveryTabs'
 import DeliveryIncidentScreen from '../screens/delivery/Incident'
+import OrderChat from '../screens/shared/OrderChat'
 import { useDeliveryLocationHeartbeat } from '../hooks/useDeliveryLocationHeartbeat'
 
 const Stack =
@@ -20,6 +21,13 @@ export default function DeliveryMainStack() {
         name="Tabs"
         component={DeliveryTabs}
         options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="OrderChat"
+        component={OrderChat}
+        options={{
+          title: 'Discussion',
+        }}
       />
       <Stack.Screen
         name="Incident"

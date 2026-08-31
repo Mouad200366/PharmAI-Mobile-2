@@ -6,6 +6,7 @@ import AppTabs from './AppTabs'
 import Cart from '../screens/patient/Cart'
 import Checkout from '../screens/patient/Checkout'
 import OrderDetail from '../screens/patient/OrderDetail'
+import OrderChat from '../screens/shared/OrderChat'
 import Addresses from '../screens/patient/Addresses'
 import MedicineDetails from '../screens/patient/MedicineDetails'
 
@@ -47,6 +48,14 @@ export default function MainStack() {
         component={OrderDetail}
         options={{
           title: 'Détail de la commande',
+        }}
+      />
+
+      <Stack.Screen
+        name="OrderChat"
+        component={OrderChat}
+        options={{
+          title: 'Discussion',
         }}
       />
 
