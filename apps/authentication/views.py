@@ -3,6 +3,9 @@ from django.db import transaction
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+PharmacistLoginSerializer,
+PharmacistSignUpSerializer,
+
 
 from apps.notifications.services import deactivate_user_device
 
@@ -62,6 +65,28 @@ class LoginView(APIView):
         s.is_valid(raise_exception=True)
         return Response(s.validated_data, status=status.HTTP_200_OK)
 
+class PharmacistSignUpView(APIView):
+    permission_classes = (permissions.AllowAny,)
+
+    def post(self, request):
+        serializer = PharmacistSignUpSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        result = serializer.save()
+        return Response(result, status=status.HTTP_201_CREATED)
+
+
+class PharmacistLoginView(APIView):
+    permission_classes = (permissions.AllowAny,)
+    throttle_classes = (LoginThrottle,)
+    throttle_scope = 'login'
+
+    def post(self, request):
+        serializer = PharmacistLoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return Response(
+            serializer.validated_data,
+            status=status.HTTP_200_OK,
+        )
 
 class LogoutView(APIView):
     def post(self, request):

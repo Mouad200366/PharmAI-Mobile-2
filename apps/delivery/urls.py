@@ -151,4 +151,10 @@ urlpatterns = [
         DeliveryIncidentFinalizeReturnView.as_view(),
         name='delivery-incident-finalize-return',
     ),
+    path(
+    'active-count/',
+    views.ActiveDeliveryAgentsCountView.as_view(),
+    name='delivery-active-count',
+),
+
 ]

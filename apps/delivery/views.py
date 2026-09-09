@@ -188,6 +188,31 @@ class DeliveryApplicationMeView(APIView):
             status=201 if created else 200,
         )
 
+class ActiveDeliveryAgentsCountView(APIView):
+    permission_classes = (permissions.IsAuthenticated,)
+
+    def get(self, request):
+        if not request.user.is_pharmacist:
+            raise PermissionDenied('Pharmacist accounts only.')
+
+        profiles = DeliveryAgentProfile.objects.filter(
+            work_status='active',
+            approved_at__isnull=False,
+            is_online=True,
+            current_location__isnull=False,
+            location_updated_at__isnull=False,
+        )
+
+        active_count = sum(
+            1
+            for profile in profiles
+            if profile.has_fresh_location()
+        )
+
+        return Response({
+            'active_delivery_agents': active_count,
+        })
+
 
 class OnlineView(_DeliveryAgentMixin, APIView):
     """POST /api/delivery/online/ — toggle online/offline."""

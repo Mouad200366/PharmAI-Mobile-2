@@ -10,4 +10,14 @@ urlpatterns = [
     path('login/', views.LoginView.as_view(), name='login'),
     path('logout/', views.LogoutView.as_view(), name='logout'),
     path('refresh/', TokenRefreshView.as_view(), name='token-refresh'),
+    path(
+    'pharmacist-signup/',
+    views.PharmacistSignUpView.as_view(),
+    name='pharmacist-signup',
+),
+path(
+    'pharmacist-login/',
+    views.PharmacistLoginView.as_view(),
+    name='pharmacist-login',
+),
 ]
