@@ -48,39 +48,43 @@ export function AuthProvider({
   // VERIFY SESSION
   // ====================================================
 
-  useEffect(() => {
-    const verifySession = async () => {
-      try {
-        const response = await authApi.getCurrentUser();
+useEffect(() => {
+  const verifySession = async () => {
+    const accessToken = localStorage.getItem("pharmacyAccessToken");
+    const refreshToken = localStorage.getItem("pharmacyRefreshToken");
 
-        // Backend session is valid
-        setUser(response);
+    // No Django authentication tokens -> user is logged out
+    if (!accessToken && !refreshToken) {
+      setUser(null);
+      localStorage.removeItem("pharmacyUser");
+      setLoading(false);
+      return;
+    }
 
-        // Keep localStorage synchronized
-        localStorage.setItem(
-          "pharmacyUser",
-          JSON.stringify(response)
-        );
+    try {
+      const response = await authApi.getCurrentUser();
 
-      } catch (error) {
-        console.warn(
-          "Aucune session utilisateur active."
-        );
+      setUser(response);
 
-        // No valid backend session
-        setUser(null);
+      localStorage.setItem(
+        "pharmacyUser",
+        JSON.stringify(response)
+      );
+    } catch (error) {
+      console.warn("Aucune session utilisateur active.");
 
-        localStorage.removeItem(
-          "pharmacyUser"
-        );
+      setUser(null);
 
-      } finally {
-        setLoading(false);
-      }
-    };
+      localStorage.removeItem("pharmacyAccessToken");
+      localStorage.removeItem("pharmacyRefreshToken");
+      localStorage.removeItem("pharmacyUser");
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    verifySession();
-  }, []);
+  verifySession();
+}, []);
 
   // ====================================================
   // LOGIN
