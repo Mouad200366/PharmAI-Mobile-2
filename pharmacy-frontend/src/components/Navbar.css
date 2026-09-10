@@ -1,0 +1,424 @@
+
+/* ======================================================
+   NAVBAR
+   ====================================================== */
+
+.pharma-navbar {
+  width: 100%;
+  height: 80px;
+
+  background: #ffffff;
+  border-bottom: 1px solid #e5eaf2;
+
+  display: flex;
+  align-items: center;
+
+  padding: 0 38px;
+  box-sizing: border-box;
+
+  position: relative;
+  z-index: 100;
+}
+
+
+/* ======================================================
+   BRAND
+   ====================================================== */
+
+.pharma-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.pharma-brand-icon {  
+  width: 150px;
+  height: 52px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  flex-shrink: 0;
+  overflow: visible;
+}
+
+.pharma-brand-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.pharma-brand-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.pharma-brand-text span {
+  color: var(--pharma-muted);
+  font-size: 16px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+/* ======================================================
+   NAVIGATION
+   ====================================================== */
+
+.pharma-navigation {
+  display: flex;
+  align-items: center;
+
+  gap: 8px;
+
+  margin-left: 85px;
+}
+
+.pharma-nav-link {
+  text-decoration: none;
+
+  color: #33415c;
+
+  padding: 12px 20px;
+
+  border-radius: 8px;
+
+  font-size: 14px;
+  font-weight: 500;
+
+  transition:
+    background 0.2s ease,
+    color 0.2s ease;
+}
+
+.pharma-nav-link:hover {
+  background: #f1f5fb;
+}
+
+.pharma-nav-link.active {
+  background: var(--pharma-blue);
+  color: #ffffff;
+
+  font-weight: 600;
+}
+
+
+/* ======================================================
+   USER AREA
+   ====================================================== */
+
+.pharma-user {
+  margin-left: auto;
+
+  position: relative;
+
+  display: flex;
+  align-items: center;
+}
+
+
+/* ======================================================
+   USER AVATAR
+   ====================================================== */
+
+.user-avatar {
+  width: 38px;
+  height: 38px;
+
+  padding: 0;
+
+  border: none;
+  border-radius: 50%;
+
+  background: #dce9ff;
+  color: var(--pharma-blue);
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  font-size: 15px;
+  font-weight: 600;
+
+  cursor: pointer;
+
+  transition:
+    background 0.2s ease,
+    transform 0.15s ease,
+    box-shadow 0.2s ease;
+}
+
+.user-avatar:hover {
+  background: #cfe0ff;
+
+  box-shadow:
+    0 0 0 4px rgba(23, 73, 169, 0.08);
+}
+
+.user-avatar:active {
+  transform: scale(0.95);
+}
+
+
+/* ======================================================
+   USER DROPDOWN
+   ====================================================== */
+
+.user-menu {
+  position: absolute;
+
+  top: 50px;
+  right: 0;
+
+  width: 300px;
+
+  background: #ffffff;
+
+  border: 1px solid #e3e8f0;
+  border-radius: 12px;
+
+  box-shadow:
+    0 12px 35px rgba(20, 50, 100, 0.14);
+
+  overflow: hidden;
+
+  z-index: 9999;
+
+  animation: userMenuAppear 0.16s ease-out;
+}
+
+
+/* ======================================================
+   DROPDOWN ANIMATION
+   ====================================================== */
+
+@keyframes userMenuAppear {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+
+/* ======================================================
+   USER INFORMATION HEADER
+   ====================================================== */
+
+.user-menu-header {
+  display: flex;
+  align-items: center;
+
+  gap: 13px;
+
+  padding: 18px;
+}
+
+
+/* ======================================================
+   LARGE USER AVATAR
+   ====================================================== */
+
+.user-menu-avatar {
+  width: 46px;
+  height: 46px;
+
+  flex-shrink: 0;
+
+  border-radius: 50%;
+
+  background: #dce9ff;
+  color: var(--pharma-blue);
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  font-size: 17px;
+  font-weight: 700;
+}
+
+
+/* ======================================================
+   USER INFORMATION
+   ====================================================== */
+
+.user-menu-info {
+  flex: 1;
+
+  min-width: 0;
+
+  display: flex;
+  flex-direction: column;
+
+  gap: 4px;
+}
+
+.user-menu-info strong {
+  display: block;
+
+  color: #17345f;
+
+  font-size: 14px;
+  line-height: 18px;
+
+  font-weight: 600;
+
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-menu-info span {
+  display: block;
+
+  color: #7d8ba3;
+
+  font-size: 11px;
+  line-height: 15px;
+
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+
+/* ======================================================
+   DIVIDER
+   ====================================================== */
+
+.user-menu-divider {
+  width: 100%;
+  height: 1px;
+
+  background: #edf0f5;
+}
+
+
+/* ======================================================
+   MENU ITEMS
+   ====================================================== */
+
+.user-menu-item {
+  width: 100%;
+
+  margin: 0;
+  padding: 13px 18px;
+
+  border: none;
+
+  background: #ffffff;
+
+  display: flex;
+  align-items: center;
+
+  gap: 12px;
+
+  color: #33415c;
+
+  font-family: inherit;
+
+  font-size: 13px;
+  font-weight: 500;
+
+  text-align: left;
+
+  cursor: pointer;
+
+  box-sizing: border-box;
+
+  transition:
+    background 0.18s ease,
+    color 0.18s ease;
+}
+
+.user-menu-item:hover {
+  background: #f5f8fc;
+}
+
+
+/* ======================================================
+   MENU ICON
+   ====================================================== */
+
+.user-menu-icon {
+  width: 22px;
+  height: 22px;
+
+  flex-shrink: 0;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  font-size: 15px;
+}
+
+
+/* ======================================================
+   LOGOUT
+   ====================================================== */
+
+.user-menu-item.logout {
+  color: #d93030;
+
+  border-top: 1px solid #f0f2f6;
+}
+
+.user-menu-item.logout:hover {
+  background: #fff5f5;
+  color: #c62828;
+}
+
+
+/* ======================================================
+   RESPONSIVE
+   ====================================================== */
+
+@media (max-width: 900px) {
+
+  .pharma-navbar {
+    padding: 0 20px;
+  }
+
+  .pharma-navigation {
+    margin-left: 30px;
+  }
+
+  .pharma-nav-link {
+    padding: 10px 12px;
+  }
+
+  .user-menu {
+    width: 280px;
+  }
+}
+
+
+@media (max-width: 700px) {
+
+  .pharma-brand-text {
+    display: none;
+  }
+
+  .pharma-navigation {
+    margin-left: 20px;
+    gap: 2px;
+  }
+
+  .pharma-nav-link {
+    padding: 9px 10px;
+    font-size: 13px;
+  }
+
+  .user-menu {
+    right: -5px;
+  }
+}
+

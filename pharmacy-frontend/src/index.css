@@ -1,0 +1,39 @@
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  --pharma-navy: #0A2A66;
+  --pharma-blue: #0B63F6;
+  --pharma-blue-bright: #1677FF;
+  --pharma-cyan: #19CFE3;
+  --pharma-bg: #F4F8FC;
+  --pharma-white: #FFFFFF;
+
+  --pharma-success: #16B889;
+  --pharma-warning: #D99614;
+  --pharma-danger: #D93030;
+
+  --pharma-text: #1E293B;
+  --pharma-muted: #7D8BA3;
+  --pharma-border: #E5EAF2;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+
+  width: 100%;
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input {
+  font-family: inherit;
+}

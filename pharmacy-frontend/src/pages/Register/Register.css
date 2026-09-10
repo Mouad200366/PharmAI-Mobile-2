@@ -1,0 +1,550 @@
+* {
+  box-sizing: border-box;
+}
+
+.register-page {
+  min-height: 100vh;
+  background: #f5f7fc;
+  display: flex;
+  font-family: Inter, Arial, sans-serif;
+}
+
+
+/* =========================
+   LEFT SIDE
+========================= */
+
+.register-presentation {
+  width: 44%;
+  min-height: 100vh;
+
+  background:
+    radial-gradient(
+      circle at 85% 15%,
+      rgba(255,255,255,0.12),
+      transparent 28%
+    ),
+    radial-gradient(
+      circle at 10% 85%,
+      rgba(255,255,255,0.08),
+      transparent 35%
+    ),
+    linear-gradient(
+      145deg,
+      #3868c7,
+      #4e78d5 55%,
+      #6c91df
+    );
+
+  color: white;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  padding: 55px;
+}
+
+.register-presentation-content {
+  width: 100%;
+  max-width: 520px;
+  min-height: 780px;
+
+  display: flex;
+  flex-direction: column;
+}
+
+
+/* BRAND */
+
+.register-brand {
+  display: flex;
+  align-items: center;
+
+  gap: 12px;
+
+  font-size: 25px;
+  font-weight: 600;
+}
+
+.register-brand-icon {
+  width: 40px;
+  height: 40px;
+
+  border-radius: 9px;
+
+  background: white;
+
+  color: #315ebc;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  font-size: 21px;
+  font-weight: bold;
+}
+
+
+/* PRESENTATION */
+
+.register-presentation-text {
+  margin-top: auto;
+  margin-bottom: auto;
+}
+
+.register-eyebrow {
+  display: inline-block;
+
+  margin-bottom: 15px;
+
+  font-size: 9px;
+  font-weight: 700;
+
+  letter-spacing: 2px;
+
+  color: rgba(255,255,255,0.7);
+}
+
+.register-presentation-text h1 {
+  margin: 0 0 22px;
+
+  font-size: 32px;
+  line-height: 1.25;
+
+  font-weight: 700;
+}
+
+.register-presentation-text > p {
+  max-width: 470px;
+
+  margin: 0 0 32px;
+
+  color: rgba(255,255,255,0.88);
+
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+
+/* FEATURES */
+
+.register-features {
+  display: flex;
+  flex-direction: column;
+
+  gap: 18px;
+}
+
+.register-feature {
+  display: flex;
+
+  gap: 12px;
+
+  align-items: flex-start;
+}
+
+.register-feature > span {
+  width: 22px;
+  height: 22px;
+
+  flex-shrink: 0;
+
+  border-radius: 50%;
+
+  background: rgba(255,255,255,0.16);
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  font-size: 11px;
+}
+
+.register-feature strong {
+  display: block;
+
+  font-size: 12px;
+
+  margin-bottom: 3px;
+}
+
+.register-feature p {
+  margin: 0;
+
+  color: rgba(255,255,255,0.72);
+
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+
+/* DOTS */
+
+.register-dots {
+  display: flex;
+  align-items: center;
+
+  gap: 8px;
+}
+
+.register-dots span {
+  width: 7px;
+  height: 7px;
+
+  border-radius: 50%;
+
+  background: rgba(255,255,255,0.45);
+}
+
+.register-dots span.active {
+  width: 28px;
+
+  border-radius: 10px;
+
+  background: white;
+}
+
+
+/* =========================
+   RIGHT SIDE
+========================= */
+
+.register-form-section {
+  width: 56%;
+
+  min-height: 100vh;
+
+  background: #f9faff;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  padding: 45px;
+}
+
+
+/* CARD */
+
+.register-card {
+  width: 100%;
+  max-width: 560px;
+
+  background: white;
+
+  border: 1px solid #edf0f6;
+
+  border-radius: 16px;
+
+  padding: 34px 40px;
+
+  box-shadow:
+    0 8px 30px rgba(20,42,80,0.07);
+}
+
+
+/* HEADER */
+
+.register-header {
+  margin-bottom: 25px;
+}
+
+.register-header h2 {
+  margin: 0;
+
+  color: #102d63;
+
+  font-size: 25px;
+}
+
+.register-header p {
+  margin: 8px 0 0;
+
+  color: #697386;
+
+  font-size: 12px;
+}
+
+
+/* =========================
+   FORM
+========================= */
+
+.register-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.register-section-title {
+  margin-bottom: 13px;
+
+  color: #173b78;
+
+  font-size: 10px;
+  font-weight: 700;
+
+  text-transform: uppercase;
+
+  letter-spacing: 0.7px;
+}
+
+.pharmacy-title {
+  margin-top: 10px;
+}
+
+
+.register-two-columns {
+  display: grid;
+
+  grid-template-columns: 1fr 1fr;
+
+  gap: 14px;
+}
+
+.register-field {
+  margin-bottom: 14px;
+}
+
+.register-field label {
+  display: block;
+
+  margin-bottom: 6px;
+
+  color: #273653;
+
+  font-size: 10px;
+
+  font-weight: 600;
+}
+
+.register-field input {
+  width: 100%;
+
+  height: 40px;
+
+  padding: 0 11px;
+
+  border: 1px solid #dce2ed;
+
+  border-radius: 6px;
+
+  outline: none;
+
+  color: #1c2d4c;
+
+  background: white;
+
+  font-size: 11px;
+
+  transition: 0.2s;
+}
+
+.register-field input:focus {
+  border-color: #315fc0;
+
+  box-shadow:
+    0 0 0 3px rgba(49,95,192,0.08);
+}
+
+.register-field input::placeholder {
+  color: #a5adba;
+}
+
+
+/* INPUT WITH ICON */
+
+.register-input-wrapper {
+  height: 40px;
+
+  border: 1px solid #dce2ed;
+
+  border-radius: 6px;
+
+  background: white;
+
+  display: flex;
+
+  align-items: center;
+
+  padding: 0 11px;
+
+  gap: 9px;
+
+  transition: 0.2s;
+}
+
+.register-input-wrapper:focus-within {
+  border-color: #315fc0;
+
+  box-shadow:
+    0 0 0 3px rgba(49,95,192,0.08);
+}
+
+.register-input-wrapper > span {
+  color: #7b879d;
+
+  font-size: 13px;
+}
+
+.register-input-wrapper input {
+  border: none;
+
+  outline: none;
+
+  height: 100%;
+
+  width: 100%;
+
+  padding: 0;
+
+  font-size: 11px;
+}
+
+.register-password-toggle {
+  border: none;
+
+  background: transparent;
+
+  color: #8993a4;
+
+  cursor: pointer;
+
+  padding: 0;
+}
+
+
+/* TERMS */
+
+.register-terms {
+  display: flex;
+
+  align-items: flex-start;
+
+  gap: 8px;
+
+  margin: 3px 0 18px;
+
+  color: #697386;
+
+  font-size: 9px;
+
+  line-height: 1.5;
+
+  cursor: pointer;
+}
+
+.register-terms input {
+  margin-top: 2px;
+
+  accent-color: #17499c;
+}
+
+
+/* BUTTON */
+
+.register-button {
+  width: 100%;
+
+  height: 45px;
+
+  border: none;
+
+  border-radius: 7px;
+
+  background:
+    linear-gradient(
+      90deg,
+      #073d91,
+      #007d8b
+    );
+
+  color: white;
+
+  font-size: 11px;
+
+  font-weight: 600;
+
+  cursor: pointer;
+
+  display: flex;
+
+  align-items: center;
+  justify-content: center;
+
+  gap: 10px;
+
+  transition: 0.2s;
+}
+
+.register-button:hover {
+  transform: translateY(-1px);
+
+  box-shadow:
+    0 6px 16px rgba(0,72,135,0.2);
+}
+
+
+/* LOGIN */
+
+.register-login {
+  display: flex;
+
+  justify-content: center;
+
+  gap: 5px;
+
+  margin-top: 20px;
+
+  font-size: 10px;
+
+  color: #697386;
+}
+
+.register-login a {
+  color: #103e91;
+
+  font-weight: 600;
+
+  text-decoration: none;
+}
+
+.register-login a:hover {
+  text-decoration: underline;
+}
+
+
+/* =========================
+   RESPONSIVE
+========================= */
+
+@media (max-width: 1000px) {
+
+  .register-presentation {
+    display: none;
+  }
+
+  .register-form-section {
+    width: 100%;
+  }
+
+}
+
+
+@media (max-width: 600px) {
+
+  .register-form-section {
+    padding: 20px 15px;
+  }
+
+  .register-card {
+    padding: 28px 22px;
+
+    box-shadow: none;
+  }
+
+  .register-two-columns {
+    grid-template-columns: 1fr;
+  }
+
+}

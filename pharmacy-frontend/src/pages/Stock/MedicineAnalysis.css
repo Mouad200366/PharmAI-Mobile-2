@@ -1,0 +1,604 @@
+* {
+  box-sizing: border-box;
+}
+
+.medicine-analysis-page {
+  min-height: 100vh;
+  background: #f7f9fd;
+  color: #102d63;
+  font-family: Inter, Arial, Helvetica, sans-serif;
+}
+
+.medicine-analysis-content {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 34px 42px 60px;
+}
+
+
+/* =========================================================
+   HEADER
+========================================================= */
+
+.medicine-analysis-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+
+  margin-bottom: 25px;
+}
+
+.back-link {
+  display: inline-block;
+
+  margin-bottom: 12px;
+
+  color: #315fae;
+
+  font-size: 11px;
+  font-weight: 600;
+
+  text-decoration: none;
+}
+
+.back-link:hover {
+  text-decoration: underline;
+}
+
+.medicine-analysis-header h1 {
+  margin: 0 0 7px;
+
+  color: #082f72;
+
+  font-size: 28px;
+
+  letter-spacing: -0.5px;
+}
+
+.medicine-analysis-header p {
+  margin: 0;
+
+  color: #738097;
+
+  font-size: 12px;
+}
+
+.medicine-analysis-header p strong {
+  color: #254377;
+}
+
+.stock-page-button {
+  display: flex;
+  align-items: center;
+
+  height: 38px;
+
+  padding: 0 15px;
+
+  border: 1px solid #dbe3f0;
+  border-radius: 7px;
+
+  background: white;
+
+  color: #124399;
+
+  font-size: 10px;
+  font-weight: 600;
+
+  text-decoration: none;
+}
+
+.stock-page-button:hover {
+  background: #f5f8ff;
+}
+
+
+/* =========================================================
+   MEDICINE CARD
+========================================================= */
+
+.medicine-card {
+  display: flex;
+  align-items: center;
+
+  gap: 16px;
+
+  padding: 20px;
+
+  margin-bottom: 20px;
+
+  background: white;
+
+  border: 1px solid #e6ebf3;
+
+  border-radius: 12px;
+
+  box-shadow:
+    0 3px 12px rgba(30, 56, 100, 0.025);
+}
+
+.medicine-card-icon {
+  width: 54px;
+  height: 54px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  flex-shrink: 0;
+
+  border-radius: 10px;
+
+  background: #edf3ff;
+
+  font-size: 25px;
+}
+
+.medicine-card-info {
+  flex: 1;
+
+  display: flex;
+  flex-direction: column;
+
+  gap: 3px;
+}
+
+.medicine-card-info > span {
+  color: #8993a4;
+
+  font-size: 9px;
+
+  text-transform: uppercase;
+
+  letter-spacing: 0.4px;
+}
+
+.medicine-card-info h2 {
+  margin: 0;
+
+  color: #102d63;
+
+  font-size: 20px;
+}
+
+.medicine-card-info small {
+  color: #8a95a7;
+
+  font-size: 9px;
+}
+
+.medicine-status {
+  display: flex;
+  align-items: center;
+
+  gap: 6px;
+
+  padding: 7px 11px;
+
+  border-radius: 14px;
+
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.medicine-status.critical {
+  color: #d52b2b;
+  background: #fff0f0;
+}
+
+.medicine-status.low {
+  color: #d89100;
+  background: #fff6df;
+}
+
+.medicine-status.high-demand {
+  color: #2861bd;
+  background: #edf3ff;
+}
+
+.medicine-status.overstock {
+  color: #8562b7;
+  background: #f4edff;
+}
+
+.medicine-status.slow-moving {
+  color: #9b7300;
+  background: #fff7e8;
+}
+
+.medicine-status.default {
+  color: #536782;
+  background: #f1f4f8;
+}
+
+
+/* =========================================================
+   SECTIONS
+========================================================= */
+
+.analysis-section {
+  margin-bottom: 20px;
+
+  background: white;
+
+  border: 1px solid #e6ebf3;
+
+  border-radius: 12px;
+
+  overflow: hidden;
+}
+
+.section-title {
+  min-height: 54px;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  padding: 0 20px;
+
+  border-bottom: 1px solid #edf0f5;
+}
+
+.section-title h2 {
+  margin: 0;
+
+  color: #102d63;
+
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.section-title span {
+  color: #8993a4;
+
+  font-size: 9px;
+}
+
+
+/* =========================================================
+   METRICS
+========================================================= */
+
+.metrics-grid {
+  display: grid;
+
+  grid-template-columns:
+    repeat(4, minmax(0, 1fr));
+
+  gap: 12px;
+
+  padding: 18px;
+}
+
+.metric-card {
+  min-height: 125px;
+
+  display: flex;
+  flex-direction: column;
+
+  justify-content: center;
+
+  padding: 16px;
+
+  background: #fafbfe;
+
+  border: 1px solid #edf0f5;
+
+  border-radius: 9px;
+}
+
+.metric-label {
+  margin-bottom: 9px;
+
+  color: #6f7d94;
+
+  font-size: 10px;
+}
+
+.metric-card strong {
+  color: #082f72;
+
+  font-size: 26px;
+
+  line-height: 1.1;
+}
+
+.metric-card small {
+  margin-top: 5px;
+
+  color: #8993a4;
+
+  font-size: 9px;
+}
+
+
+/* =========================================================
+   AI ANALYSIS
+========================================================= */
+
+.ai-analysis-card {
+  display: flex;
+
+  gap: 14px;
+
+  padding: 20px;
+}
+
+.ai-analysis-icon {
+  width: 40px;
+  height: 40px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  flex-shrink: 0;
+
+  border-radius: 8px;
+
+  background: #edf3ff;
+
+  font-size: 18px;
+}
+
+.ai-analysis-card h3 {
+  margin: 0 0 7px;
+
+  color: #17335f;
+
+  font-size: 12px;
+}
+
+.ai-analysis-card p {
+  margin: 0;
+
+  color: #68768d;
+
+  font-size: 11px;
+
+  line-height: 1.7;
+}
+
+
+/* =========================================================
+   RECOMMENDATION
+========================================================= */
+
+.recommendation-card {
+  display: flex;
+  align-items: center;
+
+  gap: 14px;
+
+  margin: 18px;
+
+  padding: 16px;
+
+  border-radius: 9px;
+
+  background: #f8faff;
+
+  border: 1px solid #e3ebfa;
+}
+
+.recommendation-icon {
+  width: 38px;
+  height: 38px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  flex-shrink: 0;
+
+  border-radius: 8px;
+
+  background: #e9f1ff;
+
+  font-size: 17px;
+}
+
+.recommendation-icon.neutral {
+  background: #e9f8f4;
+  color: #009a78;
+}
+
+.recommendation-card strong {
+  color: #17335f;
+
+  font-size: 11px;
+}
+
+.recommendation-card p {
+  margin: 5px 0 0;
+
+  color: #6e7b91;
+
+  font-size: 10px;
+
+  line-height: 1.5;
+}
+
+
+/* =========================================================
+   ACTIONS
+========================================================= */
+
+.analysis-actions {
+  display: flex;
+  justify-content: flex-end;
+
+  gap: 10px;
+
+  margin-top: 5px;
+}
+
+.secondary-action,
+.primary-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  height: 38px;
+
+  padding: 0 16px;
+
+  border-radius: 7px;
+
+  font-size: 10px;
+  font-weight: 600;
+
+  text-decoration: none;
+}
+
+.secondary-action {
+  border: 1px solid #dbe3f0;
+
+  background: white;
+
+  color: #31598f;
+}
+
+.primary-action {
+  border: none;
+
+  background: #24489a;
+
+  color: white;
+}
+
+.secondary-action:hover {
+  background: #f5f8ff;
+}
+
+.primary-action:hover {
+  background: #1c3d87;
+}
+
+
+/* =========================================================
+   LOADING / ERROR
+========================================================= */
+
+.analysis-message {
+  min-height: 250px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  background: white;
+
+  border: 1px solid #e6ebf3;
+
+  border-radius: 12px;
+
+  color: #8993a4;
+
+  font-size: 11px;
+}
+
+.analysis-error {
+  min-height: 220px;
+
+  display: flex;
+  flex-direction: column;
+
+  align-items: center;
+  justify-content: center;
+
+  gap: 8px;
+
+  padding: 30px;
+
+  background: white;
+
+  border: 1px solid #ffd9d9;
+
+  border-radius: 12px;
+
+  text-align: center;
+}
+
+.analysis-error strong {
+  color: #c52f2f;
+
+  font-size: 13px;
+}
+
+.analysis-error span {
+  color: #8993a4;
+
+  font-size: 10px;
+}
+
+.analysis-error button {
+  margin-top: 8px;
+
+  border: none;
+  border-radius: 6px;
+
+  padding: 8px 14px;
+
+  background: #c52f2f;
+
+  color: white;
+
+  font-size: 10px;
+
+  cursor: pointer;
+}
+
+
+/* =========================================================
+   RESPONSIVE
+========================================================= */
+
+@media (max-width: 800px) {
+
+  .medicine-analysis-content {
+    padding: 25px 20px 50px;
+  }
+
+  .metrics-grid {
+    grid-template-columns:
+      repeat(2, 1fr);
+  }
+
+}
+
+@media (max-width: 550px) {
+
+  .medicine-analysis-header {
+    flex-direction: column;
+
+    align-items: stretch;
+
+    gap: 15px;
+  }
+
+  .medicine-card {
+    align-items: flex-start;
+
+    flex-wrap: wrap;
+  }
+
+  .medicine-status {
+    margin-left: 70px;
+  }
+
+  .metrics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .analysis-actions {
+    flex-direction: column;
+  }
+
+  .secondary-action,
+  .primary-action {
+    width: 100%;
+  }
+
+}

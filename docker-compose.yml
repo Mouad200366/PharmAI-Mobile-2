@@ -1,0 +1,44 @@
+name: pharmaai-pharmacy
+
+services:
+
+  pharmacy-ai:
+    build:
+      context: ./pharmacy-service
+      dockerfile: Dockerfile
+
+    container_name: pharmaai-pharmacy-ai
+
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://host.docker.internal:5434/pharmacy_mobile_db
+      SPRING_DATASOURCE_USERNAME: pharmacy_user
+      SPRING_DATASOURCE_PASSWORD: pharmacy_pass
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+
+    ports:
+      - "8082:8082"
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    restart: unless-stopped
+
+
+  pharmacy-web:
+    build:
+      context: ./pharmacy-frontend
+      dockerfile: Dockerfile
+
+    container_name: pharmaai-pharmacy-web
+
+    environment:
+      VITE_DJANGO_API_URL: http://localhost:8000/api/v1
+      VITE_SPRING_API_URL: http://localhost:8082
+
+    ports:
+      - "5173:5173"
+
+    depends_on:
+      - pharmacy-ai
+
+    restart: unless-stopped
