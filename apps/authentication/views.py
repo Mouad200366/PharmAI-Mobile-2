@@ -3,8 +3,7 @@ from django.db import transaction
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
-PharmacistLoginSerializer,
-PharmacistSignUpSerializer,
+
 
 
 from apps.notifications.services import deactivate_user_device
@@ -12,6 +11,8 @@ from apps.notifications.services import deactivate_user_device
 from .serializers import (
     LoginSerializer,
     LogoutSerializer,
+    PharmacistLoginSerializer,
+    PharmacistSignUpSerializer,
     RequestOTPSerializer,
     SignUpSerializer,
     VerifyOTPSerializer,

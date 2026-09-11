@@ -119,7 +119,7 @@ class PharmacistSignUpSerializer(serializers.Serializer):
     lastName = serializers.CharField(max_length=80)
     email = serializers.EmailField()
     phone = serializers.CharField()
-    cin = serializers.CharField(max_length=10, validators=[validate_cin])
+    cin = serializers.CharField(max_length=10)
     dateOfBirth = serializers.DateField()
     gender = serializers.ChoiceField(choices=Gender.choices)
 

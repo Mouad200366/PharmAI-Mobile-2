@@ -67,6 +67,7 @@ services:
       DATABASE_URL: postgres://pharmacy_user:pharmacy_pass@postgres:5432/pharmacy_mobile_db
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      CELERY_BROKER_URL: redis://redis:6379/0
       POSTGRES_HOST: postgres
       SECRET_KEY: ${SECRET_KEY:-change-me-in-prod}
 
@@ -85,6 +86,7 @@ services:
       DATABASE_URL: postgres://pharmacy_user:pharmacy_pass@postgres:5432/pharmacy_mobile_db
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      CELERY_BROKER_URL: redis://redis:6379/0
       POSTGRES_HOST: postgres
       SECRET_KEY: ${SECRET_KEY:-change-me-in-prod}
 
