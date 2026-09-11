@@ -42,8 +42,8 @@ services:
       redis:
         condition: service_healthy
     environment:
-      DJANGO_SETTINGS_MODULE: config.settings.production
-      DATABASE_URL: postgres://pharmacy_user:pharmacy_pass@postgres:5432/pharmacy_db
+      DJANGO_SETTINGS_MODULE: config.settings.development
+      DATABASE_URL: postgres://pharmacy_user:pharmacy_pass@postgres:5432/pharmacy_mobile_db
       REDIS_HOST: redis
       REDIS_PORT: 6379
       POSTGRES_HOST: postgres
@@ -63,8 +63,8 @@ services:
       redis:
         condition: service_healthy
     environment:
-      DJANGO_SETTINGS_MODULE: config.settings.production
-      DATABASE_URL: postgres://pharmacy_user:pharmacy_pass@postgres:5432/pharmacy_db
+      DJANGO_SETTINGS_MODULE: config.settings.development
+      DATABASE_URL: postgres://pharmacy_user:pharmacy_pass@postgres:5432/pharmacy_mobile_db
       REDIS_HOST: redis
       REDIS_PORT: 6379
       POSTGRES_HOST: postgres
@@ -81,8 +81,8 @@ services:
       redis:
         condition: service_healthy
     environment:
-      DJANGO_SETTINGS_MODULE: config.settings.production
-      DATABASE_URL: postgres://pharmacy_user:pharmacy_pass@postgres:5432/pharmacy_db
+      DJANGO_SETTINGS_MODULE: config.settings.development
+      DATABASE_URL: postgres://pharmacy_user:pharmacy_pass@postgres:5432/pharmacy_mobile_db
       REDIS_HOST: redis
       REDIS_PORT: 6379
       POSTGRES_HOST: postgres
@@ -91,3 +91,4 @@ services:
 volumes:
   postgres_mobile_data:
   redis_mobile_data:
+

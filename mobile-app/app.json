@@ -28,9 +28,9 @@
       "googleServicesFile": "./google-services.json"
     },
     "extra": {
-      "apiBaseUrl": "http://192.168.1.54:8000/api/v1",
-      "wsBaseUrl": "ws://192.168.1.54:8000/ws",
-      "pharmagentUrl": "http://192.168.1.54:8001",
+      "apiBaseUrl": "http://192.168.1.145:8000/api/v1",
+      "wsBaseUrl": "ws://192.168.1.145:8000/ws",
+      "pharmagentUrl": "http://192.168.1.145:8001",
       "eas": {
         "projectId": "17f51547-37db-462e-b613-0a4b54945765"
       }
@@ -58,3 +58,4 @@
     "owner": "mouad09s-team"
   }
 }
+
