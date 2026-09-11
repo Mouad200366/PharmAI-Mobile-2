@@ -1,14 +1,14 @@
 package com.pharmaai.pharmacy.service;
 
+import java.util.List;
+
+import org.springframework.stereotype.Service;
+
 import com.pharmaai.pharmacy.entity.Order;
 import com.pharmaai.pharmacy.entity.OrderItem;
 import com.pharmaai.pharmacy.entity.PharmacyStock;
 import com.pharmaai.pharmacy.repository.OrderRepository;
 import com.pharmaai.pharmacy.repository.PharmacyStockRepository;
-
-import org.springframework.stereotype.Service;
-
-import java.util.List;
 
 @Service
 public class AiPharmacyService {
@@ -62,13 +62,28 @@ public class AiPharmacyService {
                     .append(item.getMedicine().getManufacturer())
                     .append("\n");
 
-            data.append("Quantité : ")
-                    .append(item.getQuantity())
-                    .append("\n");
+            int quantity = item.getQuantity();
 
-            data.append("Disponible : ")
-                    .append(item.isAvailable() ? "Oui" : "Non")
-                    .append("\n");
+String stockStatus;
+if (quantity == 0) {
+    stockStatus = "RUPTURE DE STOCK";
+} else if (quantity < 5) {
+    stockStatus = "STOCK FAIBLE";
+} else {
+    stockStatus = "STOCK NORMAL";
+}
+
+data.append("Quantité : ")
+        .append(quantity)
+        .append("\n");
+
+data.append("État du stock : ")
+        .append(stockStatus)
+        .append("\n");
+
+data.append("Disponible : ")
+        .append(item.isAvailable() ? "Oui" : "Non")
+        .append("\n");
 
             data.append("Ordonnance requise : ")
                     .append(
@@ -142,8 +157,14 @@ public class AiPharmacyService {
                 - Sois clair et concis.
                 - Utilise des listes lorsque cela améliore la lisibilité.
                 - Tu peux identifier des tendances simples dans les données.
-                - Tu peux signaler les stocks faibles.
-                - Tu peux signaler les ruptures de stock.
+                - L'état du stock est déjà calculé par le système.
+                - RUPTURE DE STOCK signifie quantité = 0.
+                - STOCK FAIBLE signifie quantité entre 1 et 4 inclus.
+                - STOCK NORMAL signifie quantité >= 5.
+                - Ne recalcule jamais et ne modifie jamais l'état du stock fourni.
+                - Un médicament avec 5 unités ou plus ne doit jamais être présenté comme stock faible.
+                - Pour les recommandations de réapprovisionnement, priorise d'abord les ruptures,
+                  puis les stocks faibles.
                 - Tu peux signaler les commandes importantes ou en attente.
                 - Ne donne jamais de diagnostic médical.
                 - Le pharmacien reste responsable de la décision finale.
